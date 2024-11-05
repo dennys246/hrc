@@ -1,0 +1,5 @@
+*.jpeg
+*.png
+main.py
+._*
+__py*

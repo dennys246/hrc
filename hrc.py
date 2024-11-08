@@ -154,14 +154,17 @@ class observer:
                 'kurtosis': {},
                 'skewness': {},
                 'snr': {}                
-                }  
+                },
+            'SCI': []  
             }
 
 
-    def compare(self, subject_id, raw_nirx, preproc_nirx, convolved_nirx):
+    def compare_subject(self, subject_id, raw_nirx, preproc_nirx, convolved_nirx):
+        self.channels = preproc_nirx.ch_names
+
         self.plot_nirx(subject_id, preproc_nirx, convolved_nirx)
 
-        self.calc_sci(subject_id, raw_nirx, 'raw')
+        self.metrics['SCI'] = np.concatenate((self.metrics['SCI'], self.calc_sci(subject_id, raw_nirx, 'raw')), axis = 0)
         self.calc_pp(subject_id, raw_nirx, 'raw')
 
         meters = [self.calc_skewness_and_kurtosis, self.calc_snr, self.calc_heart_rate_presence]
@@ -169,10 +172,10 @@ class observer:
             response = meter(subject_id, preproc_nirx, 'preprocessed')
             response = meter(subject_id, convolved_nirx, 'convolved')
 
-        channels = preproc_nirx.ch_names
 
-        channel_kurtosis = {state: {channel: 0 for channel in channels} for state in ['preprocessed', 'convolved']}
-        channel_skewness = {state: {channel: 0 for channel in channels} for state in ['preprocessed', 'convolved']}
+    def compare_subjects(self):
+        channel_kurtosis = {state: {channel: 0 for channel in self.channels} for state in ['preprocessed', 'convolved']}
+        channel_skewness = {state: {channel: 0 for channel in self.channels} for state in ['preprocessed', 'convolved']}
         
         kurtosis = {
             'preprocessed': [],
@@ -185,13 +188,13 @@ class observer:
         for state in ['preprocessed', 'convolved']:
             count = 0
             #Add all kurtosis across subjects per channel
-            for subject, channels in self.metrics[state]['kurtosis'].items():
+            for subject_id, channels in self.metrics[state]['kurtosis'].items():
                 for channel in channels:
                     channel_kurtosis[state][channel] += self.metrics[state]['kurtosis'][subject_id][channel]
                     count += 1
 
             # Add all skewness across subjects per channel
-            for subject, channels in self.metrics[state]['skewness'].items():
+            for subject_id, channels in self.metrics[state]['skewness'].items():
                 for channel in channels:
                     channel_skewness[state][channel] += self.metrics[state]['skewness'][subject_id][channel]
             
@@ -199,9 +202,6 @@ class observer:
             for channel in channels:
                 skewness[state].append(channel_skewness[state][channel] / count)
                 kurtosis[state].append(channel_kurtosis[state][channel] / count) 
-
-        print(f"Skewness: {skewness}")
-        print(f"Kurtosis: {kurtosis}")
 
         for metric, metric_name in zip([kurtosis, skewness], ['Kurtosis', 'Skewness']):    
             # Set the number of bars
@@ -222,6 +222,13 @@ class observer:
             # Show the plot
             plt.savefig(f'channel_wise_{metric_name.lower()}.jpeg')
             plt.close()
+
+        print(f"SCI: {self.metrics['SCI'].shape}")
+
+        plt.hist(self.metrics['SCI'])
+        plt.title(f'Subject-Wise Scalp Coupling Index')
+        plt.savefig(f'subject_wise_sci.jpeg')
+        plt.close()
 
     def plot_nirx(self, subject_id, preproc_scan, convolved_scan, channel = 1):
         preproc_scan.load_data()
@@ -268,7 +275,8 @@ class observer:
         axis.hist(preproc_sci)
         axis.set_title(f'{subject_id} {state} Scalp Coupling Index')
         plt.savefig(f'{state}_sci.jpeg')
-        return True
+        plt.close()
+        return preproc_sci
 
     def calc_snr(self, subject_id, scan, state):
         # Load the nirx object
@@ -350,7 +358,7 @@ class observer:
 
         for i, psd in enumerate(psd_all_channels):
             plt.plot(freqs, psd, label=f'Channel {i+1}')
-            
+        
         # Highlight the heart rate frequency range
         plt.axvspan(heart_rate_low, heart_rate_high, color='red', alpha=0.2, label='Heart Rate Range (0.8-2.0 Hz)')
 
@@ -363,4 +371,10 @@ class observer:
         plt.yscale('log')  # Log scale for better visualization of peaks
         plt.savefig(f'{state}_hr_presence.jpeg')
         plt.close()
+    
+    # Individual waveforms per channel
 
+    # SCI across subjects
+
+    # Write our intro/discussion and describe plots in powerpoint
+    # --> User Neurophotonics as structure

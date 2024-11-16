@@ -1,0 +1,5 @@
+mne>=1.8.0
+numpy>=1.26.4
+matplotlib>=3.9.0
+scipy>=1.13.0
+mne_nirs>=0.7.1

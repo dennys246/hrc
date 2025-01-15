@@ -1,0 +1,13 @@
+LICENSE
+README.md
+setup.py
+hrconv/__init__.py
+hrconv/hrc.py
+hrconv/observer.py
+hrconv.egg-info/PKG-INFO
+hrconv.egg-info/SOURCES.txt
+hrconv.egg-info/dependency_links.txt
+hrconv.egg-info/requires.txt
+hrconv.egg-info/top_level.txt
+tests/__init__.py
+tests/test_batch.py

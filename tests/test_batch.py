@@ -1,6 +1,10 @@
-import mne, hrc
+import mne, sys
 from glob import glob
 from itertools import compress
+
+sys.path.append("/storage1/fs1/perlmansusan/Active/moochie/github/hrc/hrconv")
+
+import hrc, observer
 
 def load(bids_dir, ex_subs = []):
     # make a list where all of the scans will get loaded into
@@ -72,19 +76,19 @@ def preprocess(scan):
 def test():
     subject_ids, raw_scans, preproc_scans = load('/storage1/fs1/perlmansusan/Active/moochie/analysis/CARE/NIRS_data_clean_2/')
 
-    lens = hrc.lens()
+    lens = observer.lens()
 
     for subject_id, raw_nirx, preproc_nirx in zip(subject_ids, raw_scans, preproc_scans):
         # Create a copy of the original scan
-        convolved_nirx = preproc_nirx.copy()
-        convolved_nirx.load_data()
+        deconvolved_nirx = preproc_nirx.copy()
+        deconvolved_nirx.load_data()
 
         # Convolve the scan
-        convolved_nirx = hrc.convolve_hrf(convolved_nirx, plot = True)
+        deconvolved_nirx = hrc.deconvolve_hrf(deconvolved_nirx, plot = True)
         
-        print(f"{subject_id} - {raw_nirx} - {preproc_nirx} - {convolved_nirx}")
+        print(f"{subject_id} - {raw_nirx} - {preproc_nirx} - {deconvolved_nirx}")
 
-        lens.compare_subject(subject_id, raw_nirx, preproc_nirx, convolved_nirx)
+        lens.compare_subject(subject_id, raw_nirx, preproc_nirx, deconvolved_nirx)
 
     lens.compare_subjects()
 

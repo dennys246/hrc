@@ -44,7 +44,7 @@ def deconvolve_hrf(nirx_obj, filter = None, hrf_duration = None, filter_type = '
             print(f"{len(nirx)} --> {deconvolved_signal.shape} | {len(lost_signal)} samples lost")
         
         # Handle NaN values (replace NaNs with zeros or interpolate)
-        deconvolved_signal = np.nan_to_num(deconvolved_signal, nan=0.0)
+        deconvolved_signal = np.nan_to_num(deconvolved_signal, nan=0.0)s
 
         # Apply Ridge regression (L2 regularization)
         X = np.expand_dims(np.arange(len(deconvolved_signal)), axis=1)
@@ -64,7 +64,7 @@ class hrf:
     # This object is intended to generate a synthetic hemodynamic response function to be
     # convovled with a NIRS object. You can pass in a variety of optional parameters like mean window,
     # sigma and scaling factor to alter the way your filter is generated.
-    def __init__(self, freq, filter = None, hrf_duration = None, filter_type = 'normal', mean_window = 2, sigma = 5, scaling_factor = 0.1, plot = False, working_directory = None):
+    def __init__(self, freq, filter = None, hrf_duration = None, filter_type = 'normal', mean_window = 2, sigma = 5, scaling_factor = 1, plot = False, working_directory = None):
         self.freq = freq
         self.filter_type = filter_type
         self.mean_window = mean_window

@@ -2,14 +2,15 @@ import statistics, os
 import numpy as np
 from matplotlib import pyplot as plt
 from scipy import signal
+from scipy.signal import wiener
 from scipy.ndimage import gaussian_filter
 from scipy.interpolate import interp1d
+from sklearn.linear_model import Ridge
 
 def convolve_hrf(nirx_obj, filter = None, hrf_duration = None, filter_type = 'normal', mean_window = 2, sigma = 5, scaling_factor = 0.1, plot = False):
-
-    # Create hrf filter
     nirx_obj.load_data()
 
+    # Create hrf filter
     if filter == None: # Create a hrf filter if none were passed in
         hrf_build = hrf(nirx_obj.info['sfreq'], filter, hrf_duration, filter_type, mean_window, sigma, scaling_factor, plot)
         filter = hrf_build.filter
@@ -20,17 +21,40 @@ def convolve_hrf(nirx_obj, filter = None, hrf_duration = None, filter_type = 'no
     # Apply convolutional function and return the resulting nirx object
     return nirx_obj.apply_function(hrf_convolution)
 
-def deconvolve_hrf(nirx_obj, filter = None, hrf_duration = None, filter_type = 'normal', mean_window = 2, sigma = 5, scaling_factor = 0.1, plot = False):
+def deconvolve_hrf(nirx_obj, filter = None, hrf_duration = None, filter_type = 'normal', mean_window = 2, sigma = 5, scaling_factor = 0.1, plot = False, verbose = False):
 
-    # Create hrf filter
+    # Load NIRX object data
     nirx_obj.load_data()
-
+    if verbose: # Check shape if verbose
+        data = nirx_obj.get_data()
+        print(f"Original fNIRS Length:{data.shape}")
+    
     if filter == None: # Create hrf filter if none were passed in
         hrf_build = hrf(nirx_obj.info['sfreq'], filter, hrf_duration, filter_type, mean_window, sigma, scaling_factor, plot)
         filter = hrf_build.filter
+        filter /= np.sum(filter)
 
-    # Deconvovle NIRX signla with the hrf filter
-    hrf_deconvolution = lambda nirx : signal.deconvolve(nirx, filter)[0]
+    # Define hrf deconvolve function to pass nirx object
+    def hrf_deconvolution(nirx):
+        original_len = nirx.shape[0]
+
+        deconvolved_signal, remainder = signal.deconvolve(nirx, filter)
+        lost_signal = [0.0 for point in range(original_len - deconvolved_signal.shape[0])]
+        if verbose:
+            print(f"{len(nirx)} --> {deconvolved_signal.shape} | {len(lost_signal)} samples lost")
+        
+        # Handle NaN values (replace NaNs with zeros or interpolate)
+        deconvolved_signal = np.nan_to_num(deconvolved_signal, nan=0.0)
+
+        # Apply Ridge regression (L2 regularization)
+        X = np.expand_dims(np.arange(len(deconvolved_signal)), axis=1)
+        y = deconvolved_signal
+        ridge = Ridge(alpha=1.0)  # Adjust alpha to control regularization strength
+        ridge.fit(X, y)
+        regularized_signal = ridge.predict(X)
+
+        return np.concatenate((regularized_signal, lost_signal))
+
 
     # Apply deconvolution and return the nirx object
     return nirx_obj.apply_function(hrf_deconvolution)

@@ -120,8 +120,8 @@ class lens:
 
         # Plot the preprocessed and deconvolved data
         plt.figure(figsize=(14, 8)) 
-        plt.plot(preproc_data[:300], color='blue', label='Preprocessed NIRS data')
-        #plt.plot(deconv_data, color='orange', label='Deconvolved NIRS data')
+        #plt.plot(preproc_data, color='blue', label='Preprocessed NIRS data')
+        plt.plot(deconv_data[0, :], color='orange', label='Deconvolved NIRS data')
         
         plt.xlabel('Samples')
         plt.ylabel('µmol/L')

@@ -5,7 +5,7 @@ from scipy.interpolate import interp1d
 from collections import deque
 from nilearn.glm.first_level import spm_hrf
 
-class tree:
+class HRTree:
     """
     This object is intended to generate a synthetic hemodynamic response function to be
     convovled with a NIRS object. You can pass in a variety of optional parameters like mean window,
@@ -25,14 +25,15 @@ class tree:
             'duration': {},
             'protocol': {},
             'age_range': {},
-            'demographics': {}}
+            'demographics': {}
+        }
         
         hrfs_json = json.load(hrf_json) # Load HRFs from json
         
         for hrf in hrfs_json:
             self.insert(hrf)
 
-        self.hash_stage =  0
+        self.hash_stage = 0
         self.hash_order = [
             'doi',
             'task',
@@ -66,20 +67,26 @@ class tree:
             else:
                 self.insert(hrf, depth + 1, node.right)
 
-    def search_dfs(self, hrf, depth=0, node=None):
+    def search_dfs(self, hrf, depth=0, node = None, max_distance = 0.5):
         if node is None:
             node = self.root
 
         if node is None:
             return None
-        if node.x == hrf.x and node.y == hrf.y and node.z == hrf.z:
-            return node
+        
+        # Find min x, y and z
+        min_x = hrf.x - max_distance
+        min_y = hrf.y - max_distance
+        min_z = hrf.z - max_distance
+        
+        if min_x > node.x and min_y > node.y and min_z > node.z:
+            return self.search_hash(hrf, node)
 
         axis = depth % 3
-        if (axis == 0 and hrf.x < node.x) or (axis == 1 and hrf.y < node.y) or (axis == 2 and hrf.z < node.z):
-            return self.search_dfs(hrf, depth + 1, node.left)
+        if (axis == 0 and min_x < node.x) or (axis == 1 and min_y < node.y) or (axis == 2 and min_z < node.z):
+            return self.search_dfs(hrf, depth + 1, node.left, max_distance,)
         else:
-            return self.search_dfs(hrf, depth + 1, node.right)
+            return self.search_dfs(hrf, depth + 1, node.right, max_distance)
 
     def search_bfs(self, hrf):
         if self.root is None:
@@ -98,32 +105,35 @@ class tree:
 
         return None
     
-    def search_hash(self, hrf, node):
+    def search_hash(self, hrf, node, hash_stage = 0):
         # Catch base case of not finding a similar hash
         if node == None:
-            node = self.root
+            return None
 
-        # Grab pertinent hash info
-        hash_stage = 0
-        while self.hash_stage < len(self.hash_order):
-            hash_variable = hrf.hash_order[self.hash_stage]
-            
-            hrf.hashables = hrf.hash_context[hash_variable] 
-            if isinstance(hrf.hashable, list) == False: hrf.hashables = [hrf.hashables]
+        # Check if we've reached base case
+        if hash_stage < len(self.hash_order): 
+            return None
+        
+        hash_variable = hrf.hash_order[hash_stage]
+        
+        hrf.hashables = hrf.hash_context[hash_variable] 
+        if isinstance(hrf.hashable, list) == False: hrf.hashables = [hrf.hashables]
 
-            node.hashables = node.hash_context[hash_variable]
-            if isinstance(hrf.hashable, list) == False: node.hashables = [node.hashables]
+        node.hashables = node.hash_context[hash_variable]
+        if isinstance(hrf.hashable, list) == False: node.hashables = [node.hashables]
 
-            for hrf.hashable in hrf.hashables:
-                hrf_hash = hash(hrf.hashable)
-                for node.hashable in node.hashables:
-                    node_hash = hash(node.hashable)
-                if hrf_hash == node_hash:
-                    return node
+        for hrf.hashable in hrf.hashables:
+            hrf_hash = hash(hrf.hashable)
 
-            self.hash_stage += 1 # Check if we've reached base case
+            for hash_ind, node.hashable in enumerate(node.hashables):
+                node_hash = hash(node.hashable)
 
-        node = self.search_hash(hrf, node.right) # Check the node to the right
+            if hrf_hash == node_hash:
+                return node
+
+        self.hash_stage += 1 # Increment hash stage to move to next context
+
+        node = self.search_hash(hrf, node.right, hash_stage + 1) # Check the node to the right
             
     def delete(self, hrf):
         self.root = self._delete_recursive(self.root, hrf, 0)

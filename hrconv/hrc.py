@@ -1,4 +1,4 @@
-import scipy.linalg, hrf
+import scipy.linalg, hrconv.hrtree as hrtree
 import numpy as np
 import matplotlib.pyplot as plt
 from glob import glob
@@ -14,7 +14,7 @@ def deconvolve_nirs(nirx_obj, hrf = None, verbose = True):
     if hrf == None: # Create hrf if none was passed in
         hrf_montage = montage(nirx_obj)
 
-    print(f"Original hrf length:{hrf.shape}\nMax Value{max(hrf)}\nMin Value: {min(hrf)}\nAny Nan: {np.isnan(hrf).any()}\nAny inf: {np.isinf(hrf).any()}")
+    print(f"Original HRF length:{hrf.shape}\nMax Value{max(hrf)}\nMin Value: {min(hrf)}\nAny Nan: {np.isnan(hrf).any()}\nAny inf: {np.isinf(hrf).any()}")
 
     # Define hrf deconvolve function to pass nirx object
     def hrf_deconvolution(nirx):
@@ -101,9 +101,9 @@ class montage:
         return 
     
     def localize_hrf(self):
-        self.hrtree = hrf.HRTree()
+        self.hrtree = hrtree.HRTree()
         for optode, context in self.optodes.items():
-            self.hrtree.search_bfs()
+            optode_hrf = self.hrtree.search_bfs()
 
     def generate_distribution(self, duration = 12):
         self.channel_estimates = {channel: [[], []] for channel in self.nirx_obj.info['ch_names']}

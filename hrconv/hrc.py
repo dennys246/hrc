@@ -140,7 +140,7 @@ class montage:
 
     def save_montage(self, json_filename, doi = 'temp', **kwargs):
         self.context = {
-            'type': 'default',
+            'type': 'global',
             'doi': doi,
             'study': None,
             'task': None,

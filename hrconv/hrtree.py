@@ -46,6 +46,7 @@ class HRTree:
         for hrf in hrfs_json:
             # Check if the hrf matches the context
             self.insert(hrf)
+    
 
     def insert(self, hrf, depth=0, node=None):
         """ Insert a new node into the 3D tree based on spatial position. """
@@ -70,7 +71,7 @@ class HRTree:
             else:
                 self.insert(hrf, depth + 1, node.right)
 
-    def search_context(self, **kwargs):
+    def compare_context(self, **kwargs):
         self.context = {**self.context, **kwargs}
 
     

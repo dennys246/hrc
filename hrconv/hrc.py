@@ -1,4 +1,4 @@
-import scipy.linalg, hrconv.hrtree as hrtree
+import scipy.linalg, hrtree, json
 import numpy as np
 import matplotlib.pyplot as plt
 from glob import glob
@@ -39,9 +39,9 @@ def deconvolve_nirs(nirx_obj, hrf = None, verbose = True):
         return np.concatenate((deconvolved_signal, lost_signal))
 
     # Apply deconvolution and return the nirx object
-    for optode, info in hrf_montage.optodes.items():
-        hrf = info['hrf'] # Grab the HRF to be used for the optode
-        nirx_obj.apply_function(hrf_deconvolution, picks = [optode])
+    for channel, info in hrf_montage.channels.items():
+        hrf = info['hrf'] # Grab the HRF to be used for the channel
+        nirx_obj.apply_function(hrf_deconvolution, picks = [channel])
     
     return nirx_obj
 
@@ -73,8 +73,9 @@ class montage:
     def __init__(self, nirx_obj):
         self.nirx_obj = nirx_obj
         self.sfreq = nirx_obj.info['sfreq']
-        self.optodes = {optode['ch_name']: {"location": optode['loc'][:3], "hrf": None} for optode in nirx_obj.info['chs']}
-        self.subject_estimates = {optode['ch_name']: {'estimates': [], 'events': []} for optode in nirx_obj.info['chs']}
+        self.channels = {channel['ch_name']: {"location": channel['loc'][:3]} for channel in nirx_obj.info['chs']}
+        self.subject_estimates = {channel['ch_name']: {'estimates': [], 'events': []} for channel in nirx_obj.info['chs']}
+        self.channel_estimates = {channel: [[], []] for channel in self.nirx_obj.info['ch_names']}
     
     def convolve_hrf(self, events, hrf):
         return np.convolve(events, hrf, mode='full')[:events.shape[0]]
@@ -102,11 +103,10 @@ class montage:
     
     def localize_hrf(self):
         self.hrtree = hrtree.HRTree()
-        for optode, context in self.optodes.items():
-            optode_hrf = self.hrtree.search_bfs()
+        for channel, context in self.channels.items():
+            channel_hrf = self.hrtree.search_bfs()
 
     def generate_distribution(self, duration = 12):
-        self.channel_estimates = {channel: [[], []] for channel in self.nirx_obj.info['ch_names']}
 
         # Generate channel wise HRF estimates
         length = int(self.sfreq * duration)
@@ -137,3 +137,52 @@ class montage:
             plt.grid(True)
             plt.tight_layout()
             plt.savefig(f"/storage1/fs1/perlmansusan/Active/moochie/github/hrc/plots/{channel}_hrf_estimate.png")
+
+    def save_montage(self, json_filename, doi = 'temp', **kwargs):
+        self.context = {
+            'type': 'default',
+            'doi': doi,
+            'study': None,
+            'task': None,
+            'conditions': None,
+            'stimulus': None,
+            'duration': None,
+            'protocol': None,
+            'age_range': None,
+            'demographics': None
+        }
+        self.context = {**self.context, **kwargs}
+
+        # Format json
+        json_contents = {}
+        for channel_name in self.channel_estimates.keys():
+            channel_identifier = f"{'-'.join(channel_name.split(' '))}-{doi}"
+            json_contents[channel_identifier] = {
+                'hrf_mean': self.channel_estimates[channel_name][0].tolist(),
+                'hrf_std': self.channel_estimates[channel_name][1].tolist(),
+                'location': self.channels[channel_name]["location"].tolist(),
+                'sfreq': self.sfreq,
+                'context': self.context
+        }
+
+        # Save to a JSON file
+        with open(json_filename, "w") as file:
+            json.dump(json_contents, file, indent=4)  # indent is optional, just makes it pretty
+        return
+    
+    def load_montage(self, json_filename):
+        # Read in json
+        with open(json_filename, 'r') as file:
+            json_contents = json.load(file)
+
+        # Update montage with saved info
+        for key, channel in json_contents.items():
+            key_split = key.split('-')
+            doi = key_split.pop()
+            channel_name = ' '.join(key_split)
+            
+            self.channel_estimates[channel_name][0] = np.array(channel['hrf_mean'])
+            self.channel_estimates[channel_name][1] = np.array(channel['hrf_std'])
+            self.channels[channel_name]["location"] = channel['location']
+            if self.context['doi'] == None: self.context = channel['context']
+        return

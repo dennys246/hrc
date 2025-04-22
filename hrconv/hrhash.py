@@ -17,13 +17,14 @@ class HashTable:
 	sure to look at many examples in many contexts when developing a function for real life use!
 	
 	Class functions:
-
+		- pyhash() -
+		- sha3() - 
     
 	Class attributed:
 
 	
 	"""
-	def __init__(self):
+	def __init__(self, context):
 		self.min_fill = float(1/3)
 		self.max_fill = float(2/3)
 
@@ -38,7 +39,7 @@ class HashTable:
 		self.prober = lambda key, hashkey : self.linear_probe(key, hashkey) # Lambda function for switching between hashed for testing probes
 
 		self.table = [None]*self.capacity # Declare hash table
-		self.dois = [[]]*self.capacity
+		self.contexts = [[]]*self.capacity
 
 	def __repr__(self): # Class callback for assessing current capactiy/fill/collision rate
 		return f"HashTable with {self.capacity} capacity {(self.size/self.capacity)*100}% full - {(self.collision_count/self.size)*100}% Collision Rate"
@@ -96,7 +97,7 @@ class HashTable:
 			self.collision_count = 0
 
 			self.table = [None]*self.capacity
-			self.dois = [[]]*self.capacity
+			self.contexts = [[]]*self.capacity
 
 		self.data = data
 		if self.data != None:
@@ -125,7 +126,7 @@ class HashTable:
 		hashkey = self.hasher(key)
 		while self.table[hashkey] is not None:
 			if self.table[hashkey] == key:
-				return self.dois[hashkey]
+				return self.contexts[hashkey]
 			hashkey = self.prober(key, hashkey)
 		self.probe_count = 0 # Reset the quadratic multiplier probe for the next call
 		return False
@@ -135,7 +136,7 @@ class HashTable:
 		while self.table[hashkey]:
 			if self.table[hashkey] == key:
 				self.table[hashkey] = '!tombstone!'
-				self.dois[hashkey] = []
+				self.contexts[hashkey] = []
 				self.size -= 1
 				break
 			hashkey = self.prober(key, hashkey)
@@ -160,9 +161,9 @@ class HashTable:
 				while new_table[position] is not None:
 					position = self.prober(self.table[ind], position)
 				new_table[position] = self.table[ind]
-				new_hrf_filenames[position] = self.dois[ind]
+				new_hrf_filenames[position] = self.contexts[ind]
 		self.table = new_table
-		self.dois = new_hrf_filenames
+		self.contexts = new_hrf_filenames
 
 	def double_check(self):
 		found = 0

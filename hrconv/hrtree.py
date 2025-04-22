@@ -1,11 +1,11 @@
-import os, json, random, hrhash
+import os, json, random, math, hrhash
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.interpolate import interp1d
 from collections import deque
 from nilearn.glm.first_level import spm_hrf
 
-class HRTree:
+class Tree:
     """
     This object is intended to generate a synthetic hemodynamic response function to be
     convovled with a NIRS object. You can pass in a variety of optional parameters like mean window,
@@ -16,14 +16,13 @@ class HRTree:
     Class functions:
     
     """
-    def __init__(self, hrf_jsonfile = "hrfs.json", **kwargs):
+    def __init__(self, hrf_filename = "hrfs.json", **kwargs):
         self.root = None
 
-        self.hrf_jsonfile = hrf_jsonfile
-        self.hrf_context = hrhash.HashTable(hrf_jsonfile)
+        self.hrf_filename = hrf_filename
 
         self.context = {
-            'type': 'default',
+            'type': 'global',
             'doi': None,
             'study': None,
             'task': None,
@@ -35,18 +34,39 @@ class HRTree:
             'demographics': None
         }
         self.context = {**self.context, **kwargs}
+        self.context_weights = {key: 1.0 for key in self.context.keys()}
 
-    def build(self, hrf_jsonfile = None):
+        self.hrf_context = hrhash.HashTable(self.context)
 
-        if hrf_jsonfile == None: # If no json filename provided
-            hrf_jsonfile = self.hrf_jsonfile # Set as class default
+    def build(self, hrf_filename = None, sim_threshold = 0.0, context_weights = None):
 
-        hrfs_json = json.load(hrf_jsonfile) # Load HRFs from json
+        if hrf_filename == None: # If no json filename provided
+            hrf_filename = self.hrf_filename # Set as class default
+
+        hrfs_json = json.load(hrf_filename) # Load HRFs from json
         
-        for hrf in hrfs_json:
-            # Check if the hrf matches the context
-            self.insert(hrf)
-    
+        for channel in hrfs_json:
+
+            # If requesting a similarity comparison
+            if sim_threshold > 0.0: 
+                # Check if the hrf matches the context
+                similarity = self.compare_context(self.context, channel['context'], context_weights)
+                if similarity < sim_threshold: # If not similar enough to requested context
+                    continue # Exclude derived HRF
+            
+            # Grab channel and doi info
+            split = channel.split('-')
+            doi = split.pop()
+            ch_name = ' '.join(split)
+
+            # create a new hrf node
+            new_hrf = HRF(ch_name, doi, channel['duration'], channel['sfreq'], channel['hrf_mean'], channel['hrf_std'], channel['location'], **self.context)
+            
+            # Insert hrf node into tree
+            self.insert(new_hrf)
+
+            # Add newly added node into HRHash table?
+
 
     def insert(self, hrf, depth=0, node=None):
         """ Insert a new node into the 3D tree based on spatial position. """
@@ -71,11 +91,27 @@ class HRTree:
             else:
                 self.insert(hrf, depth + 1, node.right)
 
-    def compare_context(self, **kwargs):
-        self.context = {**self.context, **kwargs}
+    def compare_context(self, first_context, second_context, context_weights):
+        context_similarity = []
+        for key, values in first_context.items():
+            # If context not mentioned in first context
+            if values == None: # Exclude context in similarity comparison
+                continue 
 
+            same = 0 # Create a context specific similarity value
+            for value in values:
+                if value in second_context[key]:
+                    if context_weights: # If a context weight provided
+                        same += 1 * context_weights[key] # Weight similarity score
+                    else: # add 
+                        same += 1
+
+            # Calculate context-specific similarity and append
+            context_similarity.append(same/len(first_context)) 
+        
+        return sum(context_similarity) / len(context_similarity) # Average similarity and return
     
-    def search_dfs(self, hrf, depth=0, node = None, max_distance = 0.5, max_point = None, min_point = None):
+    def search_dfs(self, location, max_distance = 0.5, depth=0, node = None, max_point = None, min_point = None):
         if node is None:
             node = self.root
 
@@ -84,38 +120,94 @@ class HRTree:
         
         # Find max/min x, y and z if not calculated
         if max_point == None:
-            min_point = [hrf.x - max_distance, hrf.y - max_distance, hrf.z - max_distance]
-            max_point = [hrf.x + max_distance, hrf.y + max_distance, hrf.z + max_distance]
+            min_point = [location[0] - max_distance, location[1] - max_distance, location[2] - max_distance]
+            max_point = [location[0] + max_distance, location[1] + max_distance, location[2] + max_distance]
             
 
         if min_point[0] > node.x and min_point[1] > node.y and min_point[2] > node.z:
             # Check if right node
             if max_point[0] < node.x and max_point[1] < node.y and max_point[2] < node.z:
-                return node
+                # Check if the next node is not closer
+                current_distance = math.sqrt(sum((a - b) ** 2 for a, b in zip(location, [node.x, node.y, node.z])))
+                left_distance = math.sqrt(sum((a - b) ** 2 for a, b in zip(location, [node.left.x, node.left.y, node.left.z])))
+                right_distance = math.sqrt(sum((a - b) ** 2 for a, b in zip(location, [node.right.x, node.right.y, node.right.z])))
+                
+                # If the next neighbors are farther away than optode
+                if current_distance <= right_distance and current_distance <= left_distance: 
+                    return node
+                elif current_distance >= right_distance: # Move to the right node
+                    return self.search_dfs(location, max_distance, depth + 1, node.right, max_point, min_point)
+                else: # Move to the left node
+                    return self.search_dfs(location, max_distance, depth + 1, node.left, max_point, min_point)
 
         axis = depth % 3
         if (axis == 0 and min_point[0] < node.x) or (axis == 1 and min_point[1] < node.y) or (axis == 2 and min_point[2] < node.z):
-            return self.search_dfs(hrf, depth + 1, node.left, max_distance,)
+            return self.search_dfs(location, depth + 1, node.left, max_distance, max_point, min_point)
         else:
-            return self.search_dfs(hrf, depth + 1, node.right, max_distance)
+            return self.search_dfs(location, depth + 1, node.right, max_distance, max_point, min_point)
 
-    def search_bfs(self, hrf):
+    def search_bfs(self, location, max_distance):
         if self.root is None:
             return None
+
+        # Find max/min x, y and z if not calculated
+
+        min_point = [location[0] - max_distance, location[1] - max_distance, location[2] - max_distance]
+        max_point = [location[0] + max_distance, location[1] + max_distance, location[2] + max_distance]
 
         queue = deque([self.root])
         while queue:
             node = queue.popleft()
-            if node.x == hrf.x and node.y == hrf.y and node.z == hrf.z:
-                return node
+            # Check if node in range
+            if min_point[0] > node.x and min_point[1] > node.y and min_point[2] > node.z:
+                if max_point[0] < node.x and max_point[1] < node.y and max_point[2] < node.z:
+                    # Check if the next node is not closer
+                    current_distance = math.sqrt(sum((a - b) ** 2 for a, b in zip(location, [node.x, node.y, node.z])))
+                    left_distance = math.sqrt(sum((a - b) ** 2 for a, b in zip(location, [node.left.x, node.left.y, node.left.z])))
+                    right_distance = math.sqrt(sum((a - b) ** 2 for a, b in zip(location, [node.right.x, node.right.y, node.right.z])))
+                    # If the next neighbors are farther away than optode
+                    if current_distance <= right_distance and current_distance <= left_distance: 
+                        return node
+                    elif current_distance >= right_distance: # Move to the right node
+                        queue.append(node.right)
+                    else: # Move to the left node
+                        queue.append(node.left)
 
             if node.left:
                 queue.append(node.left)
             if node.right:
                 queue.append(node.right)
-
         return None
       
+    def save(self, hrfs_filename = 'tree_hrfs.json'):
+        hrfs = self.gather(self.root)
+        # Save to a JSON file
+        with open(hrfs_filename, "w") as file:
+            json.dump(hrfs, file, indent=4)  # indent is optional, just makes it pretty
+        return
+
+    def gather(self, node):
+        hrfs = {}
+        if node.left:
+            hrfs |= self.gather(node.left)
+        if node.right:
+            hrfs |= self.gather(node.right)
+        hrfs |= {
+            f"{'-'.join(node.ch_name.split(' '))}-{node.doi}": {
+                "hrf_mean": node.trace,
+                "hrf_std": node.trace_std,
+                "location": [
+                    node.x,
+                    node.y,
+                    node.z
+                ],
+                "sfreq": node.sfreq,
+                "context": node.context
+            }
+        }
+        return hrfs
+
+
     def delete(self, hrf):
         self.root = self._delete_recursive(self.root, hrf, 0)
 
@@ -160,7 +252,7 @@ class HRTree:
         return min([node, left_min, right_min], key=lambda n: getattr(n, ["x", "y", "z"][axis]) if n else float('inf'))
 
 class HRF:
-    def __init__(self, trace, trace_std, duration, sfreq, location = None, plot = False, **kwargs):
+    def __init__(self, doi, ch_name, duration, sfreq, trace, trace_std = None, location = None, **kwargs):
         """
         Object for storing all information apart of an estimated HRF from an fNIRS optode
 
@@ -181,10 +273,9 @@ class HRF:
             **kwargs - Context attributes to be updated, only used by class or developers
 
         """
-        # Set working directory and create plot 
-        self.working_directory = os.getcwd()
-        if os.path.exists(f"{self.working_directory}/plots/") == False and plot:
-            os.mkdir(f"{self.working_directory}/plots/")
+        # Add doi and channel names
+        self.doi = doi
+        self.ch_name = ch_name
 
         # Attach passed into info to class 
         self.sfreq = sfreq
@@ -208,7 +299,7 @@ class HRF:
 
         # Set HRF default context
         self.context = {
-            'type': 'default',
+            'type': 'global',
             'doi': None,
             'study': None,
             'task': None,
@@ -295,7 +386,7 @@ class HRF:
         Function attributes:
             std_seed (float) - Standard deviation seed between -3 and 3 to resample from the HRF trace deviation
         """
-        if self.trace_deviation == None:
+        if self.trace_std == None:
             raise ValueError(f"HRF does not have a trace deviation attached to it")
         # Resample trace
         return [mean + (std_seed * std) for mean, std in zip(self.trace, self.trace_std)]
@@ -315,7 +406,7 @@ class HRF:
         plt.title(title) 
         
         if filepath: # If filepath provided
-            plt.savefig(f'{self.working_directory}/plots/synthetic_hrf_base.jpeg') # Save
+            plt.savefig(filepath) # Save
 
         elif show: # If plot requested to be shown
             plt.show() # Show plot

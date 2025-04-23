@@ -21,25 +21,33 @@ class Tree:
 
         self.hrf_filename = hrf_filename
 
+        # Set and update context
         self.context = {
             'type': 'global',
-            'doi': None,
+            'doi': 'temp',
             'study': None,
             'task': None,
             'conditions': None,
             'stimulus': None,
-            'duration': None,
+            'duration': 12,
             'protocol': None,
             'age_range': None,
             'demographics': None
         }
-        self.context = {**self.context, **kwargs}
+        self.context = {**self.context, **kwargs} 
         self.context_weights = {key: 1.0 for key in self.context.keys()}
 
-        self.hrf_context = hrhash.HashTable(self.context)
+        self.hashtable = hrhash.HashTable(self.context)
 
     def build(self, hrf_filename = None, sim_threshold = 0.0, context_weights = None):
+        """
+        Orchestrate building the HRF tree while filtering for specific context
 
+        Arguments:
+            hrf_filename (str) - Filename of the HRF json to load into the tree
+            sim_threshold (float) - Threshold to allow or exclude HRF's based on context, defaults to 0.0 or no threshold
+            context_weights (dict) - Weight to attach to each context during similarity comparison
+        """
         if hrf_filename == None: # If no json filename provided
             hrf_filename = self.hrf_filename # Set as class default
 
@@ -63,35 +71,62 @@ class Tree:
             new_hrf = HRF(ch_name, doi, channel['duration'], channel['sfreq'], channel['hrf_mean'], channel['hrf_std'], channel['location'], **self.context)
             
             # Insert hrf node into tree
-            self.insert(new_hrf)
+            node = self.insert(new_hrf)
 
             # Add newly added node into HRHash table?
 
+    def branch(self, **kwargs):
+        """
+        Accepts context keyword inputs via kwargs, updates the trees context
+        and then builds a new tree filtering for just the context
 
-    def insert(self, hrf, depth=0, node=None):
-        """ Insert a new node into the 3D tree based on spatial position. """
-        
-        if node is None:
-            node = self.root
+        Arguments:
+            **kwargs - Any context keyword value pair to branch on (i.e. doi, age, etc)
+        """
+        self.context = {**self.context, **kwargs} # Update context
+
+        branch = Tree()
+
+        for key, values in self.context.items(): # Iterate through all context items
+            for value in values: # Iterate through each item in a context area
+                # Hash on the value and iterate through the tree pointers
+                context_references = self.hashtable.search(value)
+                for node in context_references:
+                    branch.insert(node) # Insert node pointer into branch
+        return branch
+
+    def insert(self, hrf, depth = 0, node = None):
+        """Insert a new node into the 3D k-d tree based on spatial position."""
 
         if self.root is None:
             self.root = hrf
             return self.root
 
-        axis = depth % 3  # Cycle through x, y, z axes
+        if node is None:
+            node = self.root
 
-        if (axis == 0 and hrf.x < node.x) or (axis == 1 and hrf.y < node.y) or (axis == 2 and hrf.z < node.z):
+        axis = depth % 3  # Cycle through x, y, z
+
+        h_val = (hrf.x, hrf.y, hrf.z)[axis]
+        n_val = (node.x, node.y, node.z)[axis]
+
+        if h_val < n_val:
             if node.left is None:
                 node.left = hrf
+                return node.left
             else:
-                self.insert(hrf, depth + 1, node.left)
+                return self.insert(hrf, depth + 1, node.left)
         else:
             if node.right is None:
                 node.right = hrf
+                return node.right
             else:
-                self.insert(hrf, depth + 1, node.right)
+                return self.insert(hrf, depth + 1, node.right)
 
     def compare_context(self, first_context, second_context, context_weights):
+        """
+        Compare two contexts to see how similar they are
+        """
         context_similarity = []
         for key, values in first_context.items():
             # If context not mentioned in first context
@@ -111,7 +146,10 @@ class Tree:
         
         return sum(context_similarity) / len(context_similarity) # Average similarity and return
     
-    def search_dfs(self, location, max_distance = 0.5, depth=0, node = None, max_point = None, min_point = None):
+    def search_dfs(self, optode, max_distance = 0.5, depth=0, node = None, max_point = None, min_point = None):
+        """
+        Searches the tree to find a HRF node within the max distance
+        """
         if node is None:
             node = self.root
 
@@ -120,40 +158,41 @@ class Tree:
         
         # Find max/min x, y and z if not calculated
         if max_point == None:
-            min_point = [location[0] - max_distance, location[1] - max_distance, location[2] - max_distance]
-            max_point = [location[0] + max_distance, location[1] + max_distance, location[2] + max_distance]
+            min_point = [optode.x - max_distance, optode.y - max_distance, optode.z - max_distance]
+            max_point = [optode.x + max_distance, optode.y + max_distance, optode.z + max_distance]
             
 
         if min_point[0] > node.x and min_point[1] > node.y and min_point[2] > node.z:
             # Check if right node
             if max_point[0] < node.x and max_point[1] < node.y and max_point[2] < node.z:
                 # Check if the next node is not closer
-                current_distance = math.sqrt(sum((a - b) ** 2 for a, b in zip(location, [node.x, node.y, node.z])))
-                left_distance = math.sqrt(sum((a - b) ** 2 for a, b in zip(location, [node.left.x, node.left.y, node.left.z])))
-                right_distance = math.sqrt(sum((a - b) ** 2 for a, b in zip(location, [node.right.x, node.right.y, node.right.z])))
-                
-                # If the next neighbors are farther away than optode
-                if current_distance <= right_distance and current_distance <= left_distance: 
-                    return node
-                elif current_distance >= right_distance: # Move to the right node
-                    return self.search_dfs(location, max_distance, depth + 1, node.right, max_point, min_point)
-                else: # Move to the left node
-                    return self.search_dfs(location, max_distance, depth + 1, node.left, max_point, min_point)
+                current_distance = math.sqrt(sum((a - b) ** 2 for a, b in zip([optode.x, optode.y, optode.z], [node.x, node.y, node.z])))
+                if current_distance <= max_distance:
+                    left_distance = math.sqrt(sum((a - b) ** 2 for a, b in zip([optode.x, optode.y, optode.z], [node.left.x, node.left.y, node.left.z])))
+                    right_distance = math.sqrt(sum((a - b) ** 2 for a, b in zip([optode.x, optode.y, optode.z], [node.right.x, node.right.y, node.right.z])))
+                    
+                    # If the next neighbors are farther away than optode
+                    if current_distance <= right_distance and current_distance <= left_distance: 
+                        return node
+                    elif current_distance >= right_distance: # Move to the right node
+                        return self.search_dfs(optode, max_distance, depth + 1, node.right, max_point, min_point)
+                    else: # Move to the left node
+                        return self.search_dfs(optode, max_distance, depth + 1, node.left, max_point, min_point)
 
         axis = depth % 3
         if (axis == 0 and min_point[0] < node.x) or (axis == 1 and min_point[1] < node.y) or (axis == 2 and min_point[2] < node.z):
-            return self.search_dfs(location, depth + 1, node.left, max_distance, max_point, min_point)
+            return self.search_dfs(optode, max_distance, depth + 1, node.left, max_point, min_point)
         else:
-            return self.search_dfs(location, depth + 1, node.right, max_distance, max_point, min_point)
+            return self.search_dfs(optode, max_distance, depth + 1, node.right, max_point, min_point)
 
-    def search_bfs(self, location, max_distance):
+    def search_bfs(self, optode, max_distance):
         if self.root is None:
             return None
 
         # Find max/min x, y and z if not calculated
 
-        min_point = [location[0] - max_distance, location[1] - max_distance, location[2] - max_distance]
-        max_point = [location[0] + max_distance, location[1] + max_distance, location[2] + max_distance]
+        min_point = [optode[0] - max_distance, optode[1] - max_distance, optode[2] - max_distance]
+        max_point = [optode[0] + max_distance, optode[1] + max_distance, optode[2] + max_distance]
 
         queue = deque([self.root])
         while queue:
@@ -161,18 +200,20 @@ class Tree:
             # Check if node in range
             if min_point[0] > node.x and min_point[1] > node.y and min_point[2] > node.z:
                 if max_point[0] < node.x and max_point[1] < node.y and max_point[2] < node.z:
-                    # Check if the next node is not closer
-                    current_distance = math.sqrt(sum((a - b) ** 2 for a, b in zip(location, [node.x, node.y, node.z])))
-                    left_distance = math.sqrt(sum((a - b) ** 2 for a, b in zip(location, [node.left.x, node.left.y, node.left.z])))
-                    right_distance = math.sqrt(sum((a - b) ** 2 for a, b in zip(location, [node.right.x, node.right.y, node.right.z])))
-                    # If the next neighbors are farther away than optode
-                    if current_distance <= right_distance and current_distance <= left_distance: 
-                        return node
-                    elif current_distance >= right_distance: # Move to the right node
-                        queue.append(node.right)
-                    else: # Move to the left node
-                        queue.append(node.left)
-
+                    # Check if current node distance to optode is within max distance
+                    current_distance = math.sqrt(sum((a - b) ** 2 for a, b in zip([optode.x, optode.y, optode.z], [node.x, node.y, node.z])))
+                    if current_distance <= max_distance:
+                        # Check if the next node is not closer
+                        left_distance = math.sqrt(sum((a - b) ** 2 for a, b in zip([optode.x, optode.y, optode.z], [node.left.x, node.left.y, node.left.z])))
+                        right_distance = math.sqrt(sum((a - b) ** 2 for a, b in zip([optode.x, optode.y, optode.z], [node.right.x, node.right.y, node.right.z])))
+                        # If the next neighbors are farther away than optode
+                        if current_distance <= right_distance and current_distance <= left_distance: 
+                            return node
+                        elif current_distance >= right_distance: # Move to the right node
+                            queue.append(node.right)
+                        else: # Move to the left node
+                            queue.append(node.left)
+                        continue
             if node.left:
                 queue.append(node.left)
             if node.right:
@@ -281,13 +322,11 @@ class HRF:
         self.sfreq = sfreq
         self.length = int(round(self.sfreq * duration, 0))
 
-        if trace == None:
-            self.trace = spm_hrf(self.sfreq)
-        else:
-            self.trace = trace
+        # Set the HRF mean and standard deviation of the trace
+        self.trace = trace
         self.trace_std = trace_std
 
-        if location: # Grab location
+        if isinstance(location, list): # Grab location
             self.x = location[0]
             self.y = location[1]
             self.z = location[2]
@@ -300,12 +339,12 @@ class HRF:
         # Set HRF default context
         self.context = {
             'type': 'global',
-            'doi': None,
+            'doi': 'temp',
             'study': None,
             'task': None,
             'conditions': None,
             'stimulus': None,
-            'duration': duration,
+            'duration': 12,
             'protocol': None,
             'age_range': None,
             'demographics': None
@@ -341,7 +380,7 @@ class HRF:
 
     def spline_interp(self):
         """
-        
+        Use spline interpolation to resample the HRF to a new size that fits the new target length
         """
         # Original list
         hrf_indices = np.linspace(0, len(self.trace) - 1, len(self.trace))

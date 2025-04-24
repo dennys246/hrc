@@ -72,7 +72,7 @@ def locate_hrfs(nirx_obj, hrfs_filename = 'hrfs.json', **kwargs):
     _montage.localize_hrf() # Call to the montage to localize
     return _montage
 
-def deconvolve_nirs(nirx_obj, events, hrfs_filename = "hrfs.json", verbose = True, **kwargs):
+def deconvolve_nirs(nirx_obj, hrfs_filename = "hrfs.json", verbose = True, **kwargs):
     """
     Deconvlve a fNIRS scan using estimated HRF's localized to optodes location
 
@@ -87,32 +87,35 @@ def deconvolve_nirs(nirx_obj, events, hrfs_filename = "hrfs.json", verbose = Tru
 
     # Define hrf deconvolve function to pass nirx object
     def hrf_deconvolution(nirx):
-        original_len = nirx.shape[0]
-
+        lambda_ = 1.0
+        original_len = len(nirx)
+    
+        # Normalize input
         nirx = nirx / np.max(np.abs(nirx))
 
-        # Regularization parameter (small value to stabilize)
-        lambda_ = 5e-2
+        # Pad HRF to match nirx length
+        hrf.trace = hrf.trace / np.max(np.abs(hrf.trace))
+        hrf_padded = np.pad(hrf.trace, (0, original_len - len(hrf.trace)), 'constant')
 
-        # Convolution matrix
-        A = scipy.linalg.toeplitz(nirx, expected_activity[:len(nirx)]).T
+        # Construct Toeplitz matrix from HRF
+        A = scipy.linalg.toeplitz(hrf_padded)
 
-        # Solve with regularization
-        #deconvolved_signal = np.linalg.solve(A.T @ A + lambda_ * np.eye(A.shape[1]), A.T @ nirx)
-        deconvolved_signal, _, _, _ = np.linalg.lstsq(A.T @ A + lambda_ * np.eye(A.shape[1]), A.T @ nirx, rcond=None)
-
-        lost_signal = [0.0 for _ in range(original_len - deconvolved_signal.shape[0])]
-        
-        if verbose:
-            print(f"{len(nirx)} --> {deconvolved_signal.shape} | {len(lost_signal)} samples lost")
-        return np.concatenate((deconvolved_signal, lost_signal))
+        # Solve the inverse problem with regularization
+        lhs = A.T @ A + lambda_ * np.eye(A.shape[1])
+        rhs = A.T @ nirx
+        try: # Try using standard linear least squared to solve
+            deconvolved_signal, *_ = np.linalg.lstsq(lhs, rhs, rcond=None)
+        except np.linalg.LinAlgError: # If failed try to run pinv with smoothing
+            deconvolved_signal = scipy.linalg.pinv(lhs) @ rhs
+        return deconvolved_signal
 
     # Apply deconvolution and return the nirx object
     for ch_name, hrf in _montage.channels.items():
-        expected_activity = _montage.convolve_hrf(events, hrf.trace)
-        if ch_name == 'global':
-            continue
-        nirx_obj.apply_function(hrf_deconvolution, picks = [ch_name])
+        
+        if ch_name == 'global': continue # Skip if global hrf estimate
+        
+        print(f"Deconvolving channel {ch_name}...")
+        nirx_obj.apply_function(hrf_deconvolution, picks = [ch_name]) # Apply deconvolution for channel
     return nirx_obj
 
 def resample_nirs(nirx_obj, events, std_seed, hrfs_filename = "hrfs.json", verbose = True, **kwargs):

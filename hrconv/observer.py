@@ -30,11 +30,12 @@ class lens:
             }
 
 
-    def compare_subject(self, subject_id, raw_nirx, preproc_nirx, deconv_nirx, channel = 0):
+    def compare_subject(self, subject_id, raw_nirx, preproc_nirx, deconv_nirx, events, channel = 0, length = 500):
+        print(f"Comparing subject {subject_id}")
         self.channels = preproc_nirx.ch_names
 
         # Plot the preprocessed nirx with the deconvolved with event overlays
-        self.plot_nirx(subject_id, preproc_nirx, deconv_nirx)
+        self.plot_nirx(subject_id, preproc_nirx, deconv_nirx, events, channel, length)
 
         # Grab raw NIRX quality metrics scalp coupling index and peakpower
         self.metrics['SCI'] = np.concatenate((self.metrics['SCI'], self.calc_sci(subject_id, raw_nirx, 'raw')), axis = 0)
@@ -106,7 +107,7 @@ class lens:
         plt.savefig(f'{self.working_directory}/plots/subject_wise_sci.jpeg')
         plt.close()
 
-    def plot_nirx(self, subject_id, preproc_scan, deconv_scan, channel = 1):
+    def plot_nirx(self, subject_id, preproc_scan, deconv_scan, events, channel = 1, length = 500):
 
         #Load both scans
         preproc_scan.load_data()
@@ -121,27 +122,24 @@ class lens:
         # Plot the preprocessed and deconvolved data
         plt.figure(figsize=(14, 8)) 
         #plt.plot(preproc_data, color='blue', label='Preprocessed NIRS data')
-        plt.plot(deconv_data[0, :], color='orange', label='Deconvolved NIRS data')
+        plt.plot(deconv_data[0, :length], color='orange', label='Deconvolved NIRS data')
         
         plt.xlabel('Samples')
         plt.ylabel('µmol/L')
         plt.title(f'fNIRS channel data')
 
         plt.legend(loc='best')
-
-        """
-        # Add in events
-        sfreq = preproc_scan.info['sfreq']
-        annotations = preproc_scan.annotations
-        correct_events = [int(round(annotation['onset']/sfreq, 0)) for annotation in annotations if int(bin(int(round(float(annotation['description']), 0)))[-1]) == 1]
-        incorrect_events = [int(round(annotation['onset']/sfreq, 0)) for annotation in annotations if int(bin(int(round(float(annotation['description']), 0)))[-1]) == 0]
-        for events, event_color, event_label in zip([correct_events, incorrect_events], ['green', 'red'], ['Correct', 'Incorrect']):
-            for event in events:
-                if event < 300:
-                    plt.axvline(x = event, color = event_color, label = event_label)
-        """
         
-
+        # Add in events
+        for event_ind, event in enumerate(events):
+            # If outside of range we're looking for
+            if event_ind > length: break
+            
+            if event: # If event present
+                plt.axvline(x = event_ind, color = 'green', label = 'Trial')
+        
+        plot_filename = f'{self.working_directory}/plots/channel_data/{subject_id}_channel_data.jpeg'
+        print(f"Saving deconv plot too {plot_filename}")
         plt.savefig(f'{self.working_directory}/plots/channel_data/{subject_id}_channel_data.jpeg')
         plt.close()
 

@@ -20,7 +20,6 @@ def estimate_hrfs(nirx_folder, nirx_identifier, events, hrfs_filename = "hrf_est
             'conditions': None,
             'stimulus': None,
             'intensity': None,
-            'intensity': None,
             'duration': 12,
             'protocol': None,
             'age_range': None,
@@ -84,7 +83,7 @@ class montage:
                 'task': None,
                 'conditions': None,
                 'stimulus': None,
-                'intensity': None,
+                'intensity': 1.0,
                 'duration': 12,
                 'protocol': None,
                 'age_range': None,
@@ -212,7 +211,7 @@ class montage:
         nirx_obj.load_data()
 
         # Define hrf deconvolve function to pass nirx object
-        def hrf_deconvolution(nirx):
+        def deconvolution(nirx):
             lambda_ = 5e-2
             original_len = len(nirx)
         
@@ -241,7 +240,7 @@ class montage:
             if ch_name == 'global': continue # Skip if global hrf estimate
             
             print(f"Deconvolving channel {ch_name}...")
-            nirx_obj.apply_function(hrf_deconvolution, picks = [ch_name]) # Apply deconvolution for channel
+            nirx_obj.apply_function(deconvolution, picks = [ch_name]) # Apply deconvolution for channel
         
         return nirx_obj
 
@@ -266,26 +265,28 @@ class montage:
         print(f"Original HRF length:{hrf.shape}\nMax Value{max(hrf)}\nMin Value: {min(hrf)}\nAny Nan: {np.isnan(hrf).any()}\nAny inf: {np.isinf(hrf).any()}")
 
         # Define hrf deconvolve function to pass nirx object
-        def hrf_deconvolution(nirx):
-            original_len = nirx.shape[0]
-
+        def deconvolution(nirx):
+            lambda_ = 5e-2
+            original_len = len(nirx)
+        
+            # Normalize input
             nirx = nirx / np.max(np.abs(nirx))
 
-            # Regularization parameter (small value to stabilize)
-            lambda_ = 5e-2
+            # Pad HRF to match nirx length
+            hrf.trace = hrf.trace / np.max(np.abs(hrf.trace))
+            hrf_padded = np.pad(hrf.trace, (0, original_len - len(hrf.trace)), 'constant')
 
-            # Convolution matrix
-            A = scipy.linalg.toeplitz(nirx, np.hstack([expected_activity, np.zeros(len(nirx) - len(expected_activity))])).T
+            # Construct Toeplitz matrix from HRF
+            A = scipy.linalg.toeplitz(hrf_padded)
 
-            # Solve with regularization
-            #deconvolved_signal = np.linalg.solve(A.T @ A + lambda_ * np.eye(A.shape[1]), A.T @ nirx)
-            deconvolved_signal, _, _, _ = np.linalg.lstsq(A.T @ A + lambda_ * np.eye(A.shape[1]), A.T @ nirx, rcond=None)
-
-            lost_signal = [0.0 for _ in range(original_len - deconvolved_signal.shape[0])]
-            
-            if verbose:
-                print(f"{len(nirx)} --> {deconvolved_signal.shape} | {len(lost_signal)} samples lost")
-            return np.concatenate((deconvolved_signal, lost_signal))
+            # Solve the inverse problem with regularization
+            lhs = A.T @ A + lambda_ * np.eye(A.shape[1])
+            rhs = A.T @ nirx
+            try: # Try using standard linear least squared to solve
+                deconvolved_signal, *_ = np.linalg.lstsq(lhs, rhs, rcond=None)
+            except np.linalg.LinAlgError: # If failed try to run pinv with smoothing
+                deconvolved_signal = scipy.linalg.pinv(lhs) @ rhs
+            return deconvolved_signal
 
         # Apply deconvolution and return the nirx object
         for ch_name, hrf in _montage.channels.items():

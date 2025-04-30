@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 from mne_nirs.statistics import run_glm
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+import pyvista as pv
 
 """
 This python script is used to run a generic GLM analysis on fNIRS
@@ -16,10 +18,14 @@ def get_channels_with_positions(info):
     return [idx for idx, ch in enumerate(info['chs']) if np.any(ch['loc'][:3])]
 
 # Define runtime variables
-data_dir = '/storage1/fs1/perlmansusan/Active/moochie/study_data/P-CAT/R56/NIRS_data/'
-plot_dir = "/storage1/fs1/perlmansusan/Active/moochie/github/hrc/tests/plots/"
+#data_dir = '/storage1/fs1/perlmansusan/Active/moochie/study_data/P-CAT/R56/NIRS_data/'
+#plot_dir = "/storage1/fs1/perlmansusan/Active/moochie/github/hrc/tests/plots/"
+data_dir = '/Volumes/perlmansusan/Active/moochie/study_data/P-CAT/R56/NIRS_data/'
+plot_dir = "/Volumes/perlmansusan/Active/moochie/github/hrc/tests/plots/"
 sfreq = 7.81
 event_duration = 3.0
+
+mne.viz.set_3d_backend('pyvistaqt')
 
 # Load in our data
 subject_ids, raw_scans, preproc_scans, scan_events = pipeline.load(data_dir)
@@ -118,3 +124,37 @@ print("Info object contains channels:", [ch['ch_name'] for ch in info_for_plot['
 
 for i, ch in enumerate(info_for_plot['chs']):
     print(f"{ch['ch_name']} position: {ch['loc'][:3]}")
+
+# Create another plot...
+
+# Normalize contrast values to colormap range
+norm = plt.Normalize(vmin=-max_abs, vmax=max_abs)
+colors = cm.RdBu_r(norm(contrast_for_plot))[:, :3]  # Drop alpha channel
+
+# Create 3D plot with sensor locations
+fig = mne.viz.plot_alignment(
+    info=info_for_plot,
+    show_axes=True,
+    surfaces=[],  # no brain/head surfaces
+    coord_frame='meg'  # or 'head'
+)
+
+# Create PyVista plotter for rendering
+plotter = fig
+
+# Get sensor positions and apply contrast coloring
+positions = np.array([ch['loc'][:3] for ch in info_for_plot['chs']])
+colors = cm.RdBu_r(norm(contrast_for_plot))[:, :3]
+
+# Add points to the plot
+plotter.plotter.add_points(positions, scalars=contrast_for_plot, cmap='RdBu_r', render_points_as_spheres=True, point_size=10)
+
+# Save figure
+plotter.plotter.add_scalar_bar(title="Contrast")
+plotter.plotter.screenshot(f"{plot_dir}P-CAT_3D_contrast_channels_pyvista.png")
+plotter.plotter.close()
+
+for ch in info_for_plot['chs']:
+    print(f"{ch['ch_name']} pos: {ch['loc'][:3]}")
+
+print("Number of plotted points:", positions.shape[0])

@@ -87,7 +87,7 @@ class lens:
 
             # Create the bar plot
             plt.bar(x - bar_width/2, metric['Preprocessed'], width=bar_width, label=f'Preprocessed {metric_name}', color='b', align='center')
-            plt.bar(x + bar_width/2, metric['Deconvolved'], width=bar_width, label=f'Convolved {metric_name}', color='g', align='center')
+            plt.bar(x + bar_width/2, metric['Deconvolved'], width=bar_width, label=f'Deconvolved {metric_name}', color='g', align='center')
 
             # Adding labels and title
             plt.xlabel('Positions')
@@ -122,8 +122,9 @@ class lens:
         # Plot the preprocessed and deconvolved data
         plt.figure(figsize=(14, 8)) 
         #plt.plot(preproc_data, color='blue', label='Preprocessed NIRS data')
-        plt.plot(deconv_data[0, :length], color='orange', label='Deconvolved NIRS data')
-        
+        plt.plot(deconv_data[0, :length], color='orange', label='Deconvolved NIRS')
+        plt.plot(preproc_data[0, :length], color = 'blue', label = "Standard Preprocessed NIRS")
+
         plt.xlabel('Samples')
         plt.ylabel('µmol/L')
         plt.title(f'fNIRS channel data')

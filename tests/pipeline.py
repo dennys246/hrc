@@ -97,9 +97,9 @@ def preprocess(scan):
     # convert to optical density
     scan.load_data() 
     data, times = scan.get_data(return_times=True)
-    plt.plot(times, data[0])
-    plt.savefig('/storage1/fs1/perlmansusan/Active/moochie/github/hrc/tests/plots/raw_data.jpeg')
-    plt.close()
+    #plt.plot(times, data[0])
+    #plt.savefig('/storage1/fs1/perlmansusan/Active/moochie/github/hrc/tests/plots/raw_data.jpeg')
+    #plt.close()
 
     raw_od = mne.preprocessing.nirs.optical_density(scan)
 
@@ -122,8 +122,8 @@ def preprocess(scan):
     haemo_bp = haemo.copy().filter(
         0.05, 0.2, h_trans_bandwidth=0.1, l_trans_bandwidth=0.02)
 
-    plt.plot(times, scipy.ndimage.gaussian_filter1d(haemo.get_data()[0], sigma=10))
-    plt.savefig('/storage1/fs1/perlmansusan/Active/moochie/github/hrc/tests/plots/preproc_data.jpeg')
-    plt.close()
+    #plt.plot(times, scipy.ndimage.gaussian_filter1d(haemo.get_data()[0], sigma=10))
+    #plt.savefig('/storage1/fs1/perlmansusan/Active/moochie/github/hrc/tests/plots/preproc_data.jpeg')
+    #plt.close()
 
     return haemo_bp

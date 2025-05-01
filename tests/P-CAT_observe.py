@@ -3,14 +3,15 @@ from glob import glob
 
 sys.path.append("/storage1/fs1/perlmansusan/Active/moochie/github/hrc/hrconv")
 
-import hrc, observer, pipeline
+import observer, pipeline
+import hrfunc as hrf
 
 
 def compare_subjects():
     subject_ids, raw_scans, preproc_scans, scan_events = pipeline.load('/storage1/fs1/perlmansusan/Active/moochie/study_data/P-CAT/R56/NIRS_data/')
 
     lens = observer.lens()
-    montage = hrc.montage(preproc_scans[0], "P-CAT_hrfs.json")
+    montage = hrf.montage(preproc_scans[0], "P-CAT_hrfs.json")
 
     for subject_id, raw_nirx, preproc_nirx, nirx_events in zip(subject_ids, raw_scans, preproc_scans, scan_events):
         # Construct deconvolved filename

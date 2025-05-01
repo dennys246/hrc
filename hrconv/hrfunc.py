@@ -170,34 +170,57 @@ class montage:
         """
         return np.convolve(events, hrf, mode='full')
 
-    def deconvolve_hrf(self, nirx_obj, events, duration = 12):
+    def deconvolve_hrf(self, nirx_obj, events, duration = 12.0, _lambda = 5e-2, shorten_events = False):
         """
-        Estimate an HRF subject wise given a nirx object and event impulse series
+        Estimate an HRF subject wise given a nirx object and event impulse series using toeplitz 
+        deconvolution with regularization.
 
         Arguments:
             nirx_obj (mne raw object) - fNIRS scan file loaded in through mne
             events (list) - Event impulse series indicating event occurences during fNIRS scan
         """
+        if isinstance(duration, float) == False:
+            return ValueError(f"Duration passed in must be a float or integer, duration passed in is of type {type(duration)}")
+        
+        if isinstance(duration, int): duration = float(duration)
+        
+        if isinstance(events, list) == False:
+            return ValueError(f"Events passed in must be of type list, object of type {type(events)} was passed in...")
+
         events = np.array(events)
 
         nirx_obj.load_data()
         data = nirx_obj.get_data()
 
-        transformed_events = scipy.fft.fft(events)   # Fourier Transform of Neural Activity
+        hrf_len = int(round(nirx_obj.info['sfreq'] * duration, 0)) # Calculate HRF length
+        scan_len = data.shape[1] # Grab single channel signal length
+
+        if events.shape[0] > scan_len and shorten_events:
+            events = events[:len()]
+        elif events.shape[0] != scan_len:
+            return ValueError(f"Expected events to be of length {hrf_len} but got length {events.shape[0]}...\n\nAdjust your events to match the size of the NIRS scan or if you need to cut the events short to match the NIRS scan, pass the argument shorten_events as True...")
+
+        # Build Toeplitz matrix
+        X = scipy.linalg.toeplitz(events, np.zeros(hrf_len))
+
         for fnirs_signal, channel in zip(data[:], nirx_obj.info['chs']) : # For each channel
-            transformed_signal = scipy.fft.fft(fnirs_signal)   # Fourier Transform of fMRI Signal
+            # Grab channel data and normalize
+            Y = fnirs_signal / np.max(np.abs(fnirs_signal))
 
-            # Avoid division by zero by adding a small regularization term
-            epsilon = 1e-6
-            freq_deconv = (transformed_signal * np.conj(transformed_events)) / (np.abs(transformed_events) ** 2 + epsilon)  # Deconvolution in Frequency Domain
+            # Define regularized least squares equation
+            lhs = X.T @ X + _lambda * np.eye(X.shape[1])
+            rhs = X.T @ Y
 
-            # Compute the Inverse Fourier Transform to get estimated HRF
-            hrf_estimate = np.real(scipy.fft.ifft(freq_deconv))
-
+            try: # Try estimating with standard least squares
+                hrf_estimate, *_ = np.linalg.lstsq(lhs, rhs, rcond=None)
+            except np.linalg.LinAlgError: # If that fails, try applying the same with smoothing
+                hrf_estimate = scipy.linalg.pinv(lhs) @ rhs
+        
             self.subject_estimates[channel['ch_name']]['estimates'].append(hrf_estimate)
             self.subject_estimates[channel['ch_name']]['events'].append(events)
         
         self.generate_distribution(duration)
+
 
     def deconvolve_nirs(self, nirx_obj, hrfs_filename = "hrfs.json", **kwargs):
         """
@@ -300,7 +323,7 @@ class montage:
             expected_activity = _montage.convolve_hrf(events, resampled_hrf.trace)
             
             # Apply deconvolution to channel
-            nirx_obj.apply_function(hrf_deconvolution, picks = [ch_name])
+            nirx_obj.apply_function(deconvolution, picks = [ch_name])
         
         return nirx_obj
 

@@ -15,7 +15,7 @@ def estimate_hrf(hrf_filename, overwrite = False):
     if os.path.exists(hrf_filename) and overwrite == False: # Check if hrf
         return ValueError(f"HRF filename provided exists (if intentional set overwrite to True)...\nhrf_filename: {hrf_filename}")
     
-    subject_ids, raw_scans, preproc_scans, scan_events = pipeline.load('/storage1/fs1/perlmansusan/Active/moochie/study_data/P-CAT/R56/NIRS_data/')
+    subject_ids, raw_scans, preproc_scans, scan_events = pipeline.load_pcat('/storage1/fs1/perlmansusan/Active/moochie/study_data/P-CAT/R56/NIRS_data/', deconvolution = True)
 
     montage = hrf.montage(preproc_scans[0])
 
@@ -45,7 +45,7 @@ def deconvolve_pcat(hrf_filename, _overwrite = False):
 
     working_dir = "/storage1/fs1/perlmansusan/Active/moochie/github/hrc/tests/"
 
-    subject_ids, raw_scans, preproc_scans, scan_events = pipeline.load('/storage1/fs1/perlmansusan/Active/moochie/study_data/P-CAT/R56/NIRS_data/')
+    subject_ids, raw_scans, preproc_scans, scan_events = pipeline.load_pcat('/storage1/fs1/perlmansusan/Active/moochie/study_data/P-CAT/R56/NIRS_data/', deconvolution = True)
 
     # shuffle data to allow for mutliple deconvolution streams
     zipper = list(zip(subject_ids, raw_scans, preproc_scans, scan_events))
@@ -76,7 +76,7 @@ def deconvolve_pcat(hrf_filename, _overwrite = False):
         events = [1 if ind in temp_events else 0 for ind in range(temp_events[-1])]
         events += [0 for _ in range(deconvolved_nirx.n_times - len(events))]
 
-        # Convolve the scan
+        # Deconvolve the scan
         print(f"Deconlving subject {subject_id}...")
         deconvolved_nirx = montage.deconvolve_nirs(deconvolved_nirx, hrf_filename)
         
@@ -90,7 +90,7 @@ def deconvolve_pcat(hrf_filename, _overwrite = False):
 
 if __name__ == '__main__':
     hrf_filename = "/storage1/fs1/perlmansusan/Active/moochie/github/hrc/tests/P-CAT_hrfs.json"
-    #estimate_hrf(hrf_filename, True)
-    deconvolve_pcat(hrf_filename)
+    estimate_hrf(hrf_filename, True)
+    #deconvolve_pcat(hrf_filename)
 
 

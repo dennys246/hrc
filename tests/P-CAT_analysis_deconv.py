@@ -1,11 +1,18 @@
-import mne, sys, os, math, pipeline, nilearn
+import mne, os, pipeline, nilearn
 from glob import glob
 import numpy as np
 import pandas as pd
-from mne_nirs.statistics import run_glm
+import nibabel as nib
+
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import pyvista as pv
+
+from glob import glob
+from nibabel.affines import apply_affine
+from nilearn import plotting, datasets, surface
+from mne_nirs.statistics import run_glm
+
 
 """
 This python script is used to run a generic GLM analysis on fNIRS
@@ -18,22 +25,27 @@ def get_channels_with_positions(info):
     return [idx for idx, ch in enumerate(info['chs']) if np.any(ch['loc'][:3])]
 
 # Define runtime variables
-#data_dir = '/storage1/fs1/perlmansusan/Active/moochie/study_data/P-CAT/R56/NIRS_data/'
-#plot_dir = "/storage1/fs1/perlmansusan/Active/moochie/github/hrc/tests/plots/"
-data_dir = '/Volumes/perlmansusan/Active/moochie/study_data/P-CAT/R56/NIRS_data/'
-plot_dir = "/Volumes/perlmansusan/Active/moochie/github/hrc/tests/plots/"
+data_dir = '/storage1/fs1/perlmansusan/Active/moochie/study_data/P-CAT/R56/NIRS_data/'
+plot_dir = "/storage1/fs1/perlmansusan/Active/moochie/github/hrc/tests/plots/"
+#data_dir = '/Volumes/perlmansusan/Active/moochie/study_data/P-CAT/R56/NIRS_data/'
+#plot_dir = "/Volumes/perlmansusan/Active/moochie/github/hrc/tests/plots/"
 sfreq = 7.81
 event_duration = 3.0
 
-mne.viz.set_3d_backend('pyvistaqt')
+excluded = ['1189', '1126']
 
 # Load in our data
-subject_ids, raw_scans, preproc_scans, scan_events = pipeline.load(data_dir)
+subject_ids, raw_scans, preproc_scans, scan_events = pipeline.load_pcat(data_dir)
 
 # Create hold variable for subject level contrasts
 print(preproc_scans)
-subject_contrasts = []
+standard_contrasts = []
+deconv_contrasts = []
 for ind, subject_id in enumerate(subject_ids):
+    if str(subject_id) in excluded:
+        print(f"Subject {subject_id} excluded, skipping...")
+        continue
+
     print(f"Calculating subject {subject_id} congruent-incongruent contrasts")
     # Generate filename where deconvolved file is stored
     deconvolved_filename = f"{data_dir}{subject_id}/{subject_id}_Flanker/{subject_id}_Flanker_Deconvolved.fif"
@@ -51,110 +63,280 @@ for ind, subject_id in enumerate(subject_ids):
 
     # Grab subject events for just congruent vs. incongruent
     events, event_id = pipeline.process_congruency(scan_events[ind])
+    print(f"Events...\n{events}")
 
     # Format events for design matrix
-    pandas_events = pd.DataFrame([[event[0] * sfreq, event_duration, event[2], 1] for event in events], columns = ['onset', 'duration', 'trial_type', 'modulation'])
+    pandas_events = pd.DataFrame([[event[0], event_duration, event[2], 1] for event in events], columns = ['onset', 'duration', 'trial_type', 'modulation'])
     frame_times = np.array([sample / sfreq for sample in range(deconv_scan.n_times)])
     print(pandas_events)
 
     # Create design matrix
-    design_matrix = nilearn.glm.first_level.make_first_level_design_matrix(
+    deconv_design_matrix = nilearn.glm.first_level.make_first_level_design_matrix(
         frame_times,
         pandas_events, 
         hrf_model = None, 
-        drift_model='cosine', 
-        high_pass=0.01, 
-        drift_order=1)
+        drift_model = 'cosine', 
+        high_pass = 0.01, 
+        drift_order = 1)
+    
+    standard_design_matrix = nilearn.glm.first_level.make_first_level_design_matrix(
+        frame_times,
+        pandas_events, 
+        hrf_model = "spm", 
+        #hrf_model = "spm + derivative + dispersion", 
+        drift_model = 'cosine', 
+        high_pass = 0.01, 
+        drift_order = 1)
 
-    # Calculcate subject congruency-incongruency contrast
-    glm_results = run_glm(deconv_scan, design_matrix)
+    for scan, design_matrix, contrast_store, preprocessing in zip([deconv_scan, preproc_scan], [deconv_design_matrix, standard_design_matrix], [deconv_contrasts, standard_contrasts], ['Deconvolved', 'Standard']):
+        # Calculcate subject congruency-incongruency contrast
+        glm_results = run_glm(scan, design_matrix)
 
-    contrast_vec = np.array([1, -1] + [0] * (len(design_matrix.columns) - 2))
+        contrast_vec = np.array([1, -1] + [0] * (len(design_matrix.columns) - 2))
 
-    individual_contrasts = []
+        individual_contrasts = []
 
-    contrasts_obj = glm_results.compute_contrast(contrast_vec, 'F')
-    contrasts = contrasts_obj.data
-    contrast_effect = contrasts.effect
-    contrast_variance = contrasts.variance
+        contrasts_obj = glm_results.compute_contrast(contrast_vec, 'F')
+        contrasts = contrasts_obj.data
+        contrast_effect = contrasts.effect
+        contrast_variance = contrasts.variance
 
-    print(f"Contrast effects: {contrast_effect}")
-    for channel_contrast in contrast_effect:  # Each channel
-        print(channel_contrast)
-        individual_contrasts.append(channel_contrast)
+        print(f"Contrast effects: {contrast_effect}")
+        for channel_contrast in contrast_effect:  # Each channel
+            print(channel_contrast)
+            individual_contrasts.append(channel_contrast)
 
-    n_channels = len(raw_scans[ind].info['chs'])  # or 20
-    subject_contrast = np.full(n_channels, np.nan)
-    valid_idxs = get_channels_with_positions(deconv_scan.info) 
-    subject_contrast[valid_idxs] = individual_contrasts  # fill in where you have data
-    subject_contrasts.append(subject_contrast)
+        n_channels = len(raw_scans[ind].info['chs'])  # or 20
+        subject_contrast = np.full(n_channels, np.nan)
+        valid_idxs = get_channels_with_positions(deconv_scan.info) 
+        subject_contrast[valid_idxs] = individual_contrasts  # fill in where you have data
+        
+        print(f"Subject {subject_id}: number of channel contrasts = {len(individual_contrasts)}")
+        print(f"Expected number of valid channels = {len(valid_idxs)}")
+        print(f"Valid channel indices for {subject_id}: {valid_idxs}")
 
-print("Calculating subject pool wise contrast and plotting...")
-# Calculate mean and standard deviation of contrast across subjects
-contrast_array = np.vstack(subject_contrasts)  # shape (n_subjects, n_channels)
-mean_contrast = np.mean(contrast_array, axis=0)  # shape (n_channels,)
-std_contrast = np.std(contrast_array, axis=0)
+        contrast_store.append(subject_contrast)
 
-# Pick just one type of channel, i.e. hbo
-picks = mne.pick_types(preproc_scan.info, fnirs='hbo')
 
-# Use only the hbo channels for contrast and info
-contrast_for_plot = mean_contrast[picks]
-info_for_plot = mne.pick_info(preproc_scan.info, sel=picks)
+deconv_contrasts = np.vstack(deconv_contrasts)
+deconv_mean = np.mean(deconv_contrasts, axis=0)
+deconv_mean *= 100
+deconv_abs = max(abs(np.min(deconv_contrasts)), abs(np.max(deconv_contrasts)))
+deconv_vlim = (-deconv_abs, deconv_abs)
 
+# Format contrast from standard preprocessed data contrasts
+standard_contrasts = np.vstack(standard_contrasts)
+standard_mean = np.mean(standard_contrasts, axis=0)
+standard_mean *= 100
+standard_abs = max(abs(np.min(standard_contrasts)), abs(np.max(standard_contrasts)))
+standard_vlim = (-standard_abs, standard_abs)
+    
 # Calculate max value in contrast for plotting
-max_abs = np.abs(np.max(mean_contrast))
+combined = np.concatenate([standard_mean, deconv_mean])
+shared_min = np.min(combined)
+shared_max = np.max(combined)
+shared_abs = max(abs(shared_min), abs(shared_max))
+_vlim = (-shared_abs, shared_abs)
 
-# Plot a topo map of contrasts
-image, cn = mne.viz.plot_topomap(contrast_for_plot,
-                                info_for_plot, 
-                                show=True, 
-                                cmap='RdBu_r', 
-                                vlim=(-max_abs, max_abs),
-                                contours=0)
-plt.title(f"P-CAT Deconvolved Contrast")
+# Create info for plot
+#picks = mne.pick_types(preproc_scans[2].info, fnirs='hbo')
+picks = [0, 2, 4,  6,  8, 10, 12, 14, 16, 18]
+info_for_plot = mne.pick_info(preproc_scans[2].info, sel=picks)
+#for ch in info_for_plot['chs']:
+#    ch['loc'][1] -= 0.02  # shift back by 1 unit on the y-axis
+print(picks)
 
-# Save and close plot
-image.figure.savefig(f"{plot_dir}P-CAT_deconvolved_congruent-incongruent_contrast_topomap.jpg", dpi=300, bbox_inches='tight')
-plt.close(image.figure)
+#Generate plot
+fig, _axes = plt.subplots(2, 2, figsize=(12, 10))
 
-print("Contrast values for plotting:", contrast_for_plot)
-print("Number of valid channels:", np.sum(~np.isnan(contrast_for_plot)))
-print("Info object contains channels:", [ch['ch_name'] for ch in info_for_plot['chs']])
+# Plot a topo map of contrasts using mask
+deconv_image, deconv_cn = mne.viz.plot_topomap(
+    deconv_mean[picks],
+    info_for_plot,
+    axes = _axes[0, 0],
+    show = False,
+    cmap = 'RdBu_r',
+    vlim = deconv_vlim,
+    contours = 0,
+    extrapolate = 'local'
+)
+_axes[0, 0].set_title(f"Deconvolved GLM Contrast")
+
+standard_image, standard_cn = mne.viz.plot_topomap(
+    standard_mean[picks],
+    info_for_plot,
+    axes = _axes[0, 1],
+    show = False,
+    cmap = 'RdBu_r',
+    vlim = standard_vlim,
+    contours = 0,
+    extrapolate = 'local'
+)
+_axes[0, 1].set_title(f"Standard GLM Contrast with Glover HRF")
+
+norm = plt.Normalize(vmin = -shared_abs, vmax = shared_abs)
 
 for i, ch in enumerate(info_for_plot['chs']):
     print(f"{ch['ch_name']} position: {ch['loc'][:3]}")
 
-# Create another plot...
+# Get positions of channels
+positions = np.array([ch['loc'][:2] for ch in info_for_plot['chs']])  # x, y
+colors = cm.RdBu_r(norm(deconv_contrasts[0][picks]))[:, :3]  # RGB, no alpha
 
-# Normalize contrast values to colormap range
-norm = plt.Normalize(vmin=-max_abs, vmax=max_abs)
-colors = cm.RdBu_r(norm(contrast_for_plot))[:, :3]  # Drop alpha channel
+deconv_sc = _axes[1, 0].scatter(positions[:, 0], 
+                positions[:, 1],
+                c = deconv_mean[picks], 
+                cmap = 'RdBu_r',
+                vmin = -deconv_abs, 
+                vmax = deconv_abs,
+                s = 100, 
+                edgecolors = 'k')
+_axes[1, 0].axis('equal')
+_axes[1, 0].grid(True)
 
-# Create 3D plot with sensor locations
-fig = mne.viz.plot_alignment(
-    info=info_for_plot,
-    show_axes=True,
-    surfaces=[],  # no brain/head surfaces
-    coord_frame='meg'  # or 'head'
+standard_sc = _axes[1, 1].scatter(positions[:, 0], 
+                positions[:, 1],
+                c = standard_mean[picks], 
+                cmap = 'RdBu_r',
+                vmin = -standard_abs, 
+                vmax = standard_abs,
+                s = 100, 
+                edgecolors = 'k')
+_axes[1, 1].axis('equal')
+_axes[1, 1].grid(True)
+
+norm = plt.Normalize(vmin=-shared_abs, vmax=shared_abs)
+sm = cm.ScalarMappable(cmap='RdBu_r', norm=norm)
+sm.set_array([])  # Needed for matplotlib < 3.1
+
+deconv_norm = plt.Normalize(vmin=-deconv_abs, vmax=deconv_abs)
+deconv_sm = cm.ScalarMappable(cmap='RdBu_r', norm=norm)
+deconv_sm.set_array([])  # Needed for matplotlib < 3.1
+
+standard_norm = plt.Normalize(vmin=-standard_abs, vmax=standard_abs)
+standard_sm = cm.ScalarMappable(cmap='RdBu_r', norm=norm)
+standard_sm.set_array([])  # Needed for matplotlib < 3.1
+
+
+# Add a colorbar to the figure
+deconv_cbar = fig.colorbar(deconv_sm, 
+                ax = _axes[1, 0], 
+                orientation = 'vertical', 
+                shrink = 0.6, 
+                label = 'Contrast Value')
+
+standard_cbar = fig.colorbar(standard_sm, 
+                ax = _axes[1, 1], 
+                orientation = 'vertical', 
+                shrink = 0.6, 
+                label = 'Contrast Value')
+
+
+"""
+
+# Create all metadata for MNI projects
+montage = mne.channels.read_dig_fif(deconvolved_filename)
+trans = mne.channels.compute_native_head_t(montage)
+mni_coordinates = mne.head_to_mni(np.array(channel['loc'][:3] for channel in info_for_plot['chs']), 'fsaverage', trans, '/storage1/fs1/perlmansusan/Active/moochie/github/hrc/tests/fsaverage')
+shape = (91, 109, 91)
+affine = np.array([
+    [ 2,  0,  0, -90],
+    [ 0,  2,  0, -126],
+    [ 0,  0,  2, -72],
+    [ 0,  0,  0,   1]
+])
+vox_coords = np.round(apply_affine(np.linalg.inv(affine), mni_coordinates)).astype(int)
+
+# Translate deconv contrasts to MNI space
+deconv_data = np.zeros(shape)
+for (x, y, z), val in zip(vox_coords, deconv_contrasts):
+    if (0 <= x < shape[0]) and (0 <= y < shape[1]) and (0 <= z < shape[2]):
+        deconv_data[x, y, z] = val
+
+deconv_image = nib.Nifti1Image(deconv_data, affine) # Build image
+deconv_header = deconv_image.header
+nib.save(deconv_image, f'{plot_dir}fnirs_deconv_contrast_map.nii.gz')
+
+# Translate standard contrasts to MNI space
+standard_data = np.zeros(shape)
+for (x, y, z), val in zip(vox_coords, standard_contrasts):
+    if (0 <= x < shape[0]) and (0 <= y < shape[1]) and (0 <= z < shape[2]):
+        standard_data[x, y, z] = val
+
+standard_image = nib.Nifti1Image(standard_data, affine) # Build image
+standard_header = standard_image.header
+nib.save(standard_image, f'{plot_dir}fnirs_standard_contrast_map.nii.gz')
+
+_threshold = 0
+intensity = 0.5
+
+fsaverage = datasets.fetch_surf_fsaverage()
+
+fig, _axes = plt.subplots(2, 1, figsize=(10, 8))
+
+deconv_texture = surface.vol_to_surf(deconv_image, fsaverage.pial_left)
+plotting.plot_surf_stat_map(surf_map = fsaverage.infl_left,
+                            stat_map = deconv_texture, 
+                            hemi = 'left', 
+                            view = 'anterior', 
+                            title = "Deconvolved GLM Contrasts", 
+                            colorbar = False, 
+                            threshold = _threshold, 
+                            bg_on_data = True, 
+                            cmap='Spectral', 
+                            axes = _axes[0],
+                            vmax = shared_abs, 
+                            vmin = -shared_abs)
+_axes[0].set_title(f"Deconvolved GLM Contrast")
+
+standard_texture = surface.vol_to_surf(standard_image, fsaverage.pial_left)
+plotting.plot_surf_stat_map(surf_map = fsaverage.infl_left, 
+                            stat_map = standard_texture, 
+                            hemi = 'left', 
+                            view = 'anterior', 
+                            title = "Standard GLM Contrasts", 
+                            colorbar = True, 
+                            threshold = _threshold, 
+                            bg_on_data = True, 
+                            cmap='Spectral',
+                            axes = _axes[1],
+                            vmax = shared_abs, 
+                            vmin = -shared_abs)
+_axes[1].set_title(f"Standard GLM Contrast with Glover HRF")
+"""
+
+# Add overall title
+fig.suptitle("P-CAT Flanker Congruent-Incongruent Contrast", fontsize = 14)
+
+# Add shared colorbar for scatter plots
+_axes[1, 1].set_xlabel('Contrast (% signal change)')
+
+# Layout and save
+plt.tight_layout()
+plt.savefig(f"{plot_dir}P-CAT_combined_congruent-incongruent_contrasts.jpg")
+plt.close(fig)
+
+"""
+
+plotter = mne.viz.plot_alignment(
+    info = info_for_plot,
+    surfaces = [],  # or add 'head' if you want a background
+    coord_frame = 'head',
+    show_axes = True,
 )
 
-# Create PyVista plotter for rendering
-plotter = fig
+# Add colored dots at channel locations
+plotter.plotter.add_points(
+    points=positions,
+    scalars=contrast_for_plot,
+    cmap = 'RdBu_r',
+    point_size = 15,
+    render_points_as_spheres = True
+)
 
-# Get sensor positions and apply contrast coloring
-positions = np.array([ch['loc'][:3] for ch in info_for_plot['chs']])
-colors = cm.RdBu_r(norm(contrast_for_plot))[:, :3]
 
-# Add points to the plot
-plotter.plotter.add_points(positions, scalars=contrast_for_plot, cmap='RdBu_r', render_points_as_spheres=True, point_size=10)
+plotter.plotter.add_scalar_bar(title = "Contrast")
+plotter.plotter.screenshot(f"{plot_dir}P-CAT__{preprocessing.lower()}_contrast_colored_dots_3D.jpg")
+plotter.plotter.close() 
 
-# Save figure
-plotter.plotter.add_scalar_bar(title="Contrast")
-plotter.plotter.screenshot(f"{plot_dir}P-CAT_3D_contrast_channels_pyvista.png")
-plotter.plotter.close()
-
-for ch in info_for_plot['chs']:
-    print(f"{ch['ch_name']} pos: {ch['loc'][:3]}")
-
-print("Number of plotted points:", positions.shape[0])
+"""

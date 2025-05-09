@@ -202,8 +202,8 @@ class montage:
 
         # Build Toeplitz matrix
         X = scipy.linalg.toeplitz(events, np.zeros(hrf_len))
-
         for fnirs_signal, channel in zip(data[:], nirx_obj.info['chs']) : # For each channel
+            
             # Grab channel data and normalize
             Y = fnirs_signal / np.max(np.abs(fnirs_signal))
 
@@ -215,6 +215,9 @@ class montage:
                 hrf_estimate, *_ = np.linalg.lstsq(lhs, rhs, rcond=None)
             except np.linalg.LinAlgError: # If that fails, try applying the same with smoothing
                 hrf_estimate = scipy.linalg.pinv(lhs) @ rhs
+
+            # Denormalize HRF estimate
+            hrf_estimate = hrf_estimate * np.max(np.abs(fnirs_signal))
         
             self.subject_estimates[channel['ch_name']]['estimates'].append(hrf_estimate)
             self.subject_estimates[channel['ch_name']]['events'].append(events)
@@ -255,7 +258,11 @@ class montage:
                 deconvolved_signal, *_ = np.linalg.lstsq(lhs, rhs, rcond=None)
             except np.linalg.LinAlgError: # If failed try to run pinv with smoothing
                 deconvolved_signal = scipy.linalg.pinv(lhs) @ rhs
-            return deconvolved_signal
+
+            # Denormalize neural signal estimate
+            deconvolved_signal = deconvolved_signal * np.max(np.abs(nirx))
+
+            return deconvolved_signal # Return recovered neural signal
 
         # Apply deconvolution and return the nirx object
         for ch_name, hrf in self.channels.items():

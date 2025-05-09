@@ -1,11 +1,11 @@
-import mne, scipy
+import mne, scipy, random
 from glob import glob
 from itertools import compress
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 
-def load(bids_dir, ex_subs = []):
+def load_pcat(bids_dir, ex_subs = [], deconvolution = False):
     # make a list where all of the scans will get loaded into
     subject_ids = []
     raw_scans = []
@@ -41,10 +41,53 @@ def load(bids_dir, ex_subs = []):
             continue
 
         raw_scans.append(raw_nirx)
-        preproc_scans.append(preprocess(raw_nirx))
+        preproc_scans.append(preprocess(raw_nirx, deconvolution))
         scan_events.append(events)
         
     return subject_ids, raw_scans, preproc_scans, scan_events
+
+
+def load_care(bids_dir, ex_subs = [], deconvolution = False):
+    # make a list where all of the scans will get loaded into
+    subject_ids = []
+    child_scans = []
+    parent_scans = []
+
+    # Load in master file with scan order info
+    subject_dirs = glob(f'{bids_dir}*/')
+    print(subject_dirs)
+
+    for dir_ind, directory in enumerate(subject_dirs):
+        for excluded in ex_subs:
+            if excluded in directory:
+                print(f"Deleting {directory}")
+                del subject_dirs[dir_ind]
+
+    for subject_dir in [subject_dirs[random.randint(0, len(subject_dirs) - 1)] for ind in range(0, 25)]:
+
+        probe_files = glob(f"{subject_dir}/*/*/*_probeInfo.mat")
+        
+        if len(probe_files) == 0:
+                print("No probes found...")
+                continue
+        
+        for probe_file in probe_files:
+            
+            probe_split = probe_file.split('/')
+
+            subject_ids.append(subject_dir.split('/')[-3])
+
+            nirs_folder = "/".join(probe_split[:-1])
+            main_folder = probe_split[-2]
+
+            raw_nirx = mne.io.read_raw_nirx(nirs_folder)
+
+            if len(main_folder) == 13: # If parent ID
+                parent_scans.append(preprocess(raw_nirx, deconvolution))
+            else: # If child ID
+                child_scans.append(preprocess(raw_nirx, deconvolution))
+    print(parent_scans)
+    return subject_ids, child_scans, parent_scans
 
 def load_events(dir):
     # header =  ['sample', '1', 'block', 'directionality', 'congruency', 'direction', 'response', 'accuracy']
@@ -91,15 +134,15 @@ def process_accuracy(events):
     return pd.array(new_events), event_id
 
 
-def preprocess(scan):
+def preprocess(scan, deconvolution = False):
+    """
+    Preprocess fNIRS data in scan mne object passed in.
+    """
 
     #try:
     # convert to optical density
     scan.load_data() 
     data, times = scan.get_data(return_times=True)
-    #plt.plot(times, data[0])
-    #plt.savefig('/storage1/fs1/perlmansusan/Active/moochie/github/hrc/tests/plots/raw_data.jpeg')
-    #plt.close()
 
     raw_od = mne.preprocessing.nirs.optical_density(scan)
 
@@ -113,17 +156,28 @@ def preprocess(scan):
     # temporal derivative distribution repair (motion attempt)
     tddr_od = mne.preprocessing.nirs.tddr(raw_od)
 
-    bp_od = tddr_od.filter(0.01, 0.5)
+    # This function computes and applies a projection that removes the specified polynomial trend without cutting into the frequency spectrum, so you preserve everything from DC to high frequency — which is ideal when estimating the full HRF shape
+    #detrended_od = polynomial_detrend(tddr_od, order=2)
 
     # haemoglobin conversion using Beer Lambert Law (this will change channel names from frequency to hemo or deoxy hemo labelling)
-    haemo = mne.preprocessing.nirs.beer_lambert_law(bp_od, ppf=0.1)
+    haemo = mne.preprocessing.nirs.beer_lambert_law(tddr_od, ppf=0.1)
 
-    # bandpass filter <-- seems to maj
-    haemo_bp = haemo.copy().filter(
-        0.05, 0.2, h_trans_bandwidth=0.1, l_trans_bandwidth=0.02)
+    # bandpass filter if not deconvolving the data
+    if not deconvolution:
+        haemo_bp =  haemo.copy().filter(0.01, 0.2, h_trans_bandwidth=0.1, l_trans_bandwidth=0.02)
+        return haemo_bp
+    else:
+        return haemo
 
-    #plt.plot(times, scipy.ndimage.gaussian_filter1d(haemo.get_data()[0], sigma=10))
-    #plt.savefig('/storage1/fs1/perlmansusan/Active/moochie/github/hrc/tests/plots/preproc_data.jpeg')
-    #plt.close()
+def polynomial_detrend(raw, order = 1):
+    raw_detrended = raw.copy()
+    times = raw.times
+    X = np.vander(times, N = order + 1, increasing = True)  # Design matrix for polynomial trend
 
-    return haemo_bp
+    for idx in range(len(raw.ch_names)):
+        y = raw.get_data(picks = idx)[0]
+        beta = np.linalg.lstsq(X.T @ X, X.T @ y, rcond = None)[0]
+        y_detrended = y - X @ beta
+        raw_detrended._data[idx] = y_detrended
+
+    return raw_detrended

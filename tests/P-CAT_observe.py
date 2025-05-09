@@ -8,7 +8,7 @@ import hrfunc as hrf
 
 
 def compare_subjects():
-    subject_ids, raw_scans, preproc_scans, scan_events = pipeline.load('/storage1/fs1/perlmansusan/Active/moochie/study_data/P-CAT/R56/NIRS_data/')
+    subject_ids, raw_scans, preproc_scans, scan_events = pipeline.load_pcat('/storage1/fs1/perlmansusan/Active/moochie/study_data/P-CAT/R56/NIRS_data/')
 
     lens = observer.lens()
     montage = hrf.montage(preproc_scans[0], "P-CAT_hrfs.json")

@@ -27,7 +27,7 @@ class lens:
                 'snr': {}                
                 },
             'SCI': []  
-            }
+        }
 
 
     def compare_subject(self, subject_id, raw_nirx, preproc_nirx, deconv_nirx, events, channel = 0, length = 500):

@@ -235,7 +235,7 @@ class montage:
         self.generate_distribution(duration)
 
 
-    def deconvolve_nirs(self, nirx_obj, lambda_ = 1e-3, hrfs_filename = "hrfs.json", **kwargs):
+    def deconvolve_nirs(self, nirx_obj, hrfs_filename = "hrfs.json", _lambda = 1e-3, **kwargs):
         """
         Deconvlve a fNIRS scan using estimated HRF's localized to optodes location
 
@@ -256,19 +256,28 @@ class montage:
             mean = np.mean(nirx)
             std = np.std(nirx)
             Y = (nirx - mean) / std
+            Y = np.asarray(Y, dtype=float)
 
             # Pad HRF to match nirx length
             hrf_kernel = hrf.trace / np.max(np.abs(hrf.trace))
+            hrf_kernel = np.asarray(hrf_kernel, dtype=float)
 
-            # Construct Toeplitz matrix from HRF
-            A = scipy.linalg.toeplitz(hrf_kernel)
+            # Construct Toeplitz convolution matrix (design matrix)
+            n_time = len(Y)
+            n_hrf = len(hrf_kernel)
+
+            first_col = np.r_[hrf_kernel, np.zeros(n_time - n_hrf)]
+            first_row = np.r_[hrf_kernel[0], np.zeros(n_time - 1)]
+            A = scipy.linalg.toeplitz(first_col, first_row)
+            A = np.asarray(A, dtype=float)
 
             # Solve the inverse problem with regularization
-            lhs = A.T @ A + lambda_ * np.eye(A.shape[1])
+            lhs = A.T @ A + float(_lambda) * np.eye(A.shape[1])
             rhs = A.T @ Y
             try: # Try using standard linear least squared to solve
                 deconvolved_signal, *_ = np.linalg.lstsq(lhs, rhs, rcond=None)
-            except np.linalg.LinAlgError: # If failed try to run pinv with smoothing
+            except np.linalg.LinAlgError as e: # If failed try to run pinv with smoothing
+                print("LinAlgError in lstsq:", e)
                 deconvolved_signal = scipy.linalg.pinv(lhs) @ rhs
 
             print("Deconvolved signal preview:", deconvolved_signal[:10])

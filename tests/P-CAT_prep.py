@@ -36,9 +36,11 @@ def estimate_hrf(hrf_filename, overwrite = False):
 
     montage.generate_distribution()
 
+    montage.correlate_hrf("/storage1/fs1/perlmansusan/Active/moochie/github/hrc/tests/plots/montage_corr.png")
+    montage.correlate_canonical("/storage1/fs1/perlmansusan/Active/moochie/github/hrc/tests/plots/canonical_corr.png")
+
     montage.save(hrf_filename)
 
-    montage.load(hrf_filename)
 
 
 def deconvolve_pcat(hrf_filename, _overwrite = False):
@@ -90,7 +92,7 @@ def deconvolve_pcat(hrf_filename, _overwrite = False):
 
 if __name__ == '__main__':
     hrf_filename = "/storage1/fs1/perlmansusan/Active/moochie/github/hrc/tests/P-CAT_hrfs.json"
-    estimate_hrf(hrf_filename, True)
-    #deconvolve_pcat(hrf_filename)
+    #estimate_hrf(hrf_filename, True)
+    deconvolve_pcat(hrf_filename)
 
 

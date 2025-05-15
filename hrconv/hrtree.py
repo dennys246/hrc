@@ -30,7 +30,7 @@ class Tree:
             'conditions': None,
             'stimulus': None,
             'intensity': None,
-            'duration': 12,
+            'duration': 12.0,
             'protocol': None,
             'age_range': None,
             'demographics': None
@@ -248,6 +248,7 @@ class Tree:
         return
 
     def gather(self, node):
+
         hrfs = {}
         if node.left:
             hrfs |= self.gather(node.left)

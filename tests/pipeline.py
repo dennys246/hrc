@@ -136,37 +136,59 @@ def process_accuracy(events):
 
 def preprocess(scan, deconvolution = False):
     """
-    Preprocess fNIRS data in scan mne object passed in.
+    Preprocess fNIRS data in an MNE Raw object.
+
+    Steps:
+    - Optical density conversion
+    - Scalp coupling index evaluation and bad channel marking
+    - Motion artifact correction using TDDR
+    - Optional polynomial detrending for deconvolution
+    - Haemoglobin conversion via Beer-Lambert Law
+    - Optional bandpass filtering for GLM-based analysis
+
+    Parameters:
+    - scan: mne.io.Raw
+        The raw fNIRS MNE object to preprocess.
+    - deconvolution: bool
+        If True, performs detrending and skips filtering.
+
+    Returns:
+    - haemo: mne.io.Raw
+        Preprocessed data with haemoglobin concentration channels.
     """
 
-    #try:
-    # convert to optical density
-    scan.load_data() 
-    data, times = scan.get_data(return_times=True)
+    scan.load_data()
 
     raw_od = mne.preprocessing.nirs.optical_density(scan)
 
     # scalp coupling index
     sci = mne.preprocessing.nirs.scalp_coupling_index(raw_od)
-    raw_od.info['bads'] = list(compress(raw_od.ch_names, sci < 0.5))
+    raw_od.info['bads'] = list(compress(raw_od.ch_names, sci < 0.95))
+
+    if len(raw_od.info['bads']) == len(scan.ch_names):
+        print("All channels are bad, skipping subject...")
+        return
 
     if len(raw_od.info['bads']) > 0:
         print("Bad channels in subject", raw_od.info['subject_info']['his_id'], ":", raw_od.info['bads'])
 
+    # Interpolate bad channels
+    #raw_od.interpolate_bads(reset_bads = False)
+
     # temporal derivative distribution repair (motion attempt)
-    tddr_od = mne.preprocessing.nirs.tddr(raw_od)
+    od = mne.preprocessing.nirs.tddr(raw_od)
 
-    # This function computes and applies a projection that removes the specified polynomial trend without cutting into the frequency spectrum, so you preserve everything from DC to high frequency — which is ideal when estimating the full HRF shape
-    #detrended_od = polynomial_detrend(tddr_od, order=2)
+    # If running deconvolution, polynomial detrend to remove pysiological without cutting into the frequency spectrum
+    #if deconvolution:
+        #od = polynomial_detrend(od, order=1)
 
-    # haemoglobin conversion using Beer Lambert Law (this will change channel names from frequency to hemo or deoxy hemo labelling)
-    haemo = mne.preprocessing.nirs.beer_lambert_law(tddr_od, ppf=0.1)
+    # haemoglobin conversion using Beer Lambert Law 
+    haemo = mne.preprocessing.nirs.beer_lambert_law(od.copy(), ppf=0.1)
 
-    # bandpass filter if not deconvolving the data
-    if not deconvolution:
-        haemo_bp =  haemo.copy().filter(0.01, 0.2, h_trans_bandwidth=0.1, l_trans_bandwidth=0.02)
-        return haemo_bp
-    else:
+    if deconvolution: # If deconvolving return non-bandpassed data
+        return haemo
+    else:  # bandpass filter if not deconvolving the data
+        haemo.filter(0.01, 0.2)
         return haemo
 
 def polynomial_detrend(raw, order = 1):

@@ -20,7 +20,7 @@ def estimate_hrfs(nirx_folder, nirx_identifier, events, hrfs_filename = "hrf_est
             'conditions': None,
             'stimulus': None,
             'intensity': None,
-            'duration': 12,
+            'duration': 12.0,
             'protocol': None,
             'age_range': None,
             'demographics': None
@@ -84,7 +84,7 @@ class montage:
                 'conditions': None,
                 'stimulus': None,
                 'intensity': 1.0,
-                'duration': 12,
+                'duration': 12.0,
                 'protocol': None,
                 'age_range': None,
                 'demographics': None
@@ -98,6 +98,8 @@ class montage:
         self.subject_estimates = {} # Create hold variable for storing intermediary data
 
         self.sfreq = nirx_obj.info['sfreq']
+        self.hbo_channels = [ch for ch in nirx_obj.ch_names if ch.endswith('hbo')]
+        self.hbr_channels = [ch for ch in nirx_obj.ch_names if ch.endswith('hbr')]
 
         if hrfs_filename: # If hrfs json filename provided, load in
             self.load(hrfs_filename)
@@ -124,7 +126,11 @@ class montage:
 
                 # Insert empty hrf into tree and attach pointer to channel
                 self.channels[ch_name] = self.tree.insert(empty_hrf)
-    
+        self.__repr__()
+
+    def __repr__(self):
+        return f" - Montage object - \nNumber of channels: {len(self.channels)}\n Sampling frequency: {self.sfreq}\nHbO channels (count of {len(self.hbo_channels)}): {self.hbo_channels}\n HbR channels (count of {len(self.hbr_channels)}): {self.hbr_channels}\n Subject HRFs estimated: {len(self.subject_estimates)}\n\n"
+
     def localize_hrfs(self, max_distance = 3.0):
         """
         Tries to find local HRFs to each of the fNIRS optodes using the tree structure
@@ -144,7 +150,7 @@ class montage:
                 self.channels[ch_name].trace_std = hrf.trace_std
 
             else: # If hrf not found locally
-                LookupError(f"Local HRF with given context couldn't be found for channel {ch_name}, searching for global HRF")
+                print(f"Local HRF with given context couldn't be found for channel {ch_name}, searching for global HRF")
                 # Adjust channel location temporarily to global node nexus -0.5
                 ch_location = [self.channels[ch_name].x, self.channels[ch_name].y, self.channels[ch_name].z] 
                 self.channels[ch_name].x, self.channels[ch_name].y, self.channels[ch_name].z = -0.5, -0.5, -0.5
@@ -170,7 +176,7 @@ class montage:
         """
         return np.convolve(events, hrf, mode='full')
 
-    def deconvolve_hrf(self, nirx_obj, events, duration = 12.0, _lambda = 5e-2, shorten_events = False):
+    def deconvolve_hrf(self, nirx_obj, events, duration = 12.0, _lambda = 1e-3, shorten_events = False):
         """
         Estimate an HRF subject wise given a nirx object and event impulse series using toeplitz 
         deconvolution with regularization.
@@ -196,16 +202,19 @@ class montage:
         scan_len = data.shape[1] # Grab single channel signal length
 
         if events.shape[0] > scan_len and shorten_events:
-            events = events[:len()]
+            events = events[:scan_len]
         elif events.shape[0] != scan_len:
-            return ValueError(f"Expected events to be of length {hrf_len} but got length {events.shape[0]}...\n\nAdjust your events to match the size of the NIRS scan or if you need to cut the events short to match the NIRS scan, pass the argument shorten_events as True...")
+            raise ValueError(f"Expected events to be of length {hrf_len} but got length {events.shape[0]}...\n\nAdjust your events to match the size of the NIRS scan or if you need to cut the events short to match the NIRS scan, pass the argument shorten_events as True...")
 
         # Build Toeplitz matrix
         X = scipy.linalg.toeplitz(events, np.zeros(hrf_len))
         for fnirs_signal, channel in zip(data[:], nirx_obj.info['chs']) : # For each channel
             
             # Grab channel data and normalize
-            Y = fnirs_signal / np.max(np.abs(fnirs_signal))
+            #Y = fnirs_signal / np.max(np.abs(fnirs_signal))
+            mean = np.mean(fnirs_signal)
+            std = np.std(fnirs_signal)
+            Y = (fnirs_signal - mean) / std
 
             # Define regularized least squares equation
             lhs = X.T @ X + _lambda * np.eye(X.shape[1])
@@ -217,15 +226,16 @@ class montage:
                 hrf_estimate = scipy.linalg.pinv(lhs) @ rhs
 
             # Denormalize HRF estimate
-            hrf_estimate = hrf_estimate * np.max(np.abs(fnirs_signal))
-        
+            #hrf_estimate = hrf_estimate * np.max(np.abs(fnirs_signal))
+            #hrf_estimate = hrf_estimate * std + mean
+
             self.subject_estimates[channel['ch_name']]['estimates'].append(hrf_estimate)
             self.subject_estimates[channel['ch_name']]['events'].append(events)
         
         self.generate_distribution(duration)
 
 
-    def deconvolve_nirs(self, nirx_obj, hrfs_filename = "hrfs.json", **kwargs):
+    def deconvolve_nirs(self, nirx_obj, lambda_ = 1e-3, hrfs_filename = "hrfs.json", **kwargs):
         """
         Deconvlve a fNIRS scan using estimated HRF's localized to optodes location
 
@@ -238,29 +248,34 @@ class montage:
 
         # Define hrf deconvolve function to pass nirx object
         def deconvolution(nirx):
-            lambda_ = 5e-2
             original_len = len(nirx)
+
+            print("Original mean/std:", np.mean(nirx), np.std(nirx))
         
-            # Normalize input
-            nirx = nirx / np.max(np.abs(nirx))
+            # Normalize input z-score
+            mean = np.mean(nirx)
+            std = np.std(nirx)
+            Y = (nirx - mean) / std
 
             # Pad HRF to match nirx length
-            hrf.trace = hrf.trace / np.max(np.abs(hrf.trace))
-            hrf_padded = np.pad(hrf.trace, (0, original_len - len(hrf.trace)), 'constant')
+            hrf_kernel = hrf.trace / np.max(np.abs(hrf.trace))
 
             # Construct Toeplitz matrix from HRF
-            A = scipy.linalg.toeplitz(hrf_padded)
+            A = scipy.linalg.toeplitz(hrf_kernel)
 
             # Solve the inverse problem with regularization
             lhs = A.T @ A + lambda_ * np.eye(A.shape[1])
-            rhs = A.T @ nirx
+            rhs = A.T @ Y
             try: # Try using standard linear least squared to solve
                 deconvolved_signal, *_ = np.linalg.lstsq(lhs, rhs, rcond=None)
             except np.linalg.LinAlgError: # If failed try to run pinv with smoothing
                 deconvolved_signal = scipy.linalg.pinv(lhs) @ rhs
 
+            print("Deconvolved signal preview:", deconvolved_signal[:10])
+            print("Pre-rescale min/max:", np.min(deconvolved_signal), np.max(deconvolved_signal))
+
             # Denormalize neural signal estimate
-            deconvolved_signal = deconvolved_signal * np.max(np.abs(nirx))
+            #deconvolved_signal = deconvolved_signal * std + mean
 
             return deconvolved_signal # Return recovered neural signal
 
@@ -274,7 +289,7 @@ class montage:
         
         return nirx_obj
 
-    def resample_nirs(self, nirx_obj, events, std_seed, hrfs_filename = "hrfs.json", verbose = True, **kwargs):
+    def resample_nirs(self, nirx_obj, events, std_seed, _lambda = 1e-3, hrfs_filename = "hrfs.json", verbose = True, **kwargs):
         """
         Resample fNIRs data for deep learning using the HRF confidence interval
         to establish a new HRF to deconvolve the NIRS data with.
@@ -296,7 +311,6 @@ class montage:
 
         # Define hrf deconvolve function to pass nirx object
         def deconvolution(nirx):
-            lambda_ = 5e-2
             original_len = len(nirx)
         
             # Normalize input
@@ -310,7 +324,7 @@ class montage:
             A = scipy.linalg.toeplitz(hrf_padded)
 
             # Solve the inverse problem with regularization
-            lhs = A.T @ A + lambda_ * np.eye(A.shape[1])
+            lhs = A.T @ A + _lambda * np.eye(A.shape[1])
             rhs = A.T @ nirx
             try: # Try using standard linear least squared to solve
                 deconvolved_signal, *_ = np.linalg.lstsq(lhs, rhs, rcond=None)
@@ -334,7 +348,7 @@ class montage:
         
         return nirx_obj
 
-    def generate_distribution(self, duration = 12):
+    def generate_distribution(self, duration = 12.0):
         """
         Calculate average and standard deviation of HRF across subjects for each channel
 
@@ -343,7 +357,6 @@ class montage:
         """
 
         # Check if HRF subject wise estimates have been calculated
-        
         hrf_means = []
         hrf_stds = []
 
@@ -353,7 +366,10 @@ class montage:
             event_estimates = []
             for sub_ind, events in enumerate(estimates['events']):
                 for sample_ind in events:
-                    event_estimates.append(estimates['estimates'][sub_ind][sample_ind:sample_ind+length])
+                    estimate = estimates['estimates'][sub_ind]
+                    if sum(estimate) == 0: # If all zeros, skip
+                        continue
+                    event_estimates.append(estimate)
             # Estimate hrf mean accross events
             hrf_mean = np.mean(event_estimates, axis = 0)
             hrf_std = np.std(event_estimates, axis = 0)
@@ -400,9 +416,110 @@ class montage:
             plt.legend()
             plt.grid(True)
             plt.tight_layout()
-            plt.savefig(f"/storage1/fs1/perlmansusan/Active/moochie/github/hrc/plots/{channel}_hrf_estimate.png")
+            plt.savefig(f"/storage1/fs1/perlmansusan/Active/moochie/github/hrc/tests/plots/{channel}_hrf_estimate.png")
 
         # Estimate global HRF?
+
+    def correlate_hrf(self, plot_filename = "montage_correlation.png"):
+        """
+        Correlate the HRF estimates across the subject pool to assess similarity
+        """
+        corr_matrix = np.zeros((len(self.hbo_channels), len(self.hbr_channels), 2))
+        
+        # Calculate correlation coefficients and p-values between HbO and HbR channels
+        for hbo_ind, hbo_channel in enumerate(self.hbo_channels):
+            hbo_hrf = self.channels[hbo_channel].trace
+            for hbr_ind, hbr_channel in enumerate(self.hbr_channels):
+                print(f"Correlating {hbo_channel} with {hbr_channel}")
+                hbr_hrf = self.channels[hbr_channel].trace
+                corr_coefficient, p_value = scipy.stats.spearmanr(hbo_hrf, hbr_hrf)
+                corr_matrix[hbo_ind, hbr_ind, 0] = corr_coefficient
+                corr_matrix[hbo_ind, hbr_ind, 1] = p_value
+        
+        print(f"Correlation matrix: {corr_matrix[:, :, 0]}")
+
+        # Plot the correlation matrix
+        plt.figure(figsize=(10, 8))
+        plt.imshow(corr_matrix[:, :, 0], cmap='viridis', aspect='auto')
+        plt.colorbar(label='Correlation Coefficient')
+        plt.title('Correlation Matrix of HRF Estimates')
+        plt.xlabel('HbR Channels')
+        plt.ylabel('HbO Channels')
+        plt.xticks(range(len(self.hbr_channels)), self.hbr_channels, rotation=90)
+        plt.yticks(range(len(self.hbo_channels)), self.hbo_channels)
+        plt.tight_layout()
+        plt.savefig(plot_filename)
+        plt.close()
+
+        # Plot p-values
+        plt.figure(figsize=(10, 8))
+        plt.imshow(corr_matrix[:, :, 1], cmap='viridis', aspect='auto')
+        plt.colorbar(label='P-value')
+        plt.title('P-values of Correlation between HRF Estimates')
+        plt.xlabel('HbR Channels')
+        plt.ylabel('HbO Channels')
+        plt.xticks(range(len(self.hbr_channels)), self.hbr_channels, rotation=90)
+        plt.yticks(range(len(self.hbo_channels)), self.hbo_channels)
+        plt.tight_layout()
+        plt.savefig(plot_filename.replace(".png", "_pvalues.png"))
+        plt.close()
+
+        # Save the correlation matrix to a file
+        with open("correlation_matrix.json", "w") as f:
+            json.dump(corr_matrix.tolist(), f, indent=4)
+        
+        return corr_matrix
+
+    def correlate_canonical(self, plot_filename = "canonical_correlation.png", duration = 12.0):
+        """
+        Correlate the HRF estimates with a canonical HRF to assess similarity
+        """
+        # Generate canonical HRF
+        dt = 1.0 / self.sfreq
+        time_stamps = np.arange(0, duration, dt)
+
+        # Parameters for the double-gamma HRF
+        peak1 = scipy.stats.gamma.pdf(time_stamps, 6) # peak at ~6s
+        peak2 = scipy.stats.gamma.pdf(time_stamps, 16) / 6.0 # undershoot at ~16s
+
+        canonical_hrf = peak1 - peak2
+        canonical_hrf /= np.max(hrf)  # Normalize peak to 1
+
+        corr_matrix = np.zeros((len(self.hbo_channels) + len(self.hbr_channels), 2))
+        for ind, ch_name in enumerate(self.hbo_channels + self.hbr_channels):
+            hrf = self.channels[ch_name]
+            corr_coefficient, p_value = scipy.stats.spearmanr(hrf.trace, canonical_hrf)
+            corr_matrix[ind, 0] = corr_coefficient
+            corr_matrix[ind, 1] = p_value
+
+        # Plot the correlation matrix
+        plt.figure(figsize=(10, 8))
+        plt.imshow(corr_matrix[:, :, 0], cmap='viridis', aspect='auto')
+        plt.colorbar(label='Correlation Coefficient')
+        plt.title('Correlation Matrix of HRF Estimates with Cannonical HRF')
+        plt.xlabel('Montage Channels')
+        plt.ylabel('Cannonical HRF')
+        plt.xticks(range(len(self.channels.keys())), range(len(self.channels.keys())), rotation=90)
+        plt.yticks(range(len(self.channels.keys())), range(len(self.channels.keys())))
+        plt.tight_layout()
+
+        plt.savefig(plot_filename)
+        plt.close()
+
+        # Plot p-values
+        plt.figure(figsize=(10, 8))
+        plt.imshow(corr_matrix[:, :, 1], cmap='viridis', aspect='auto')
+        plt.colorbar(label='P-value')
+        plt.title('P-values of Correlation with Cannonical HRF')
+        plt.xlabel('Montage Channels')
+        plt.ylabel('Cannonical HRF')
+        plt.xticks(range(len(self.channels.keys())), range(len(self.channels.keys())), rotation=90)
+        plt.yticks(range(len(self.channels.keys())), range(len(self.channels.keys())))
+        plt.tight_layout()
+        plt.savefig(plot_filename.replace(".png", "_pvalues.png"))
+        plt.close()
+        return
+
 
     def save(self, json_filename, **kwargs):
         """ Save the HRF as a json using the json_filename"""
@@ -445,10 +562,11 @@ class montage:
                 ch_name, 
                 channel['context']['duration'], 
                 self.sfreq, 
-                np.array(channel['hrf_mean']), 
-                np.array(channel['hrf_std']), 
+                np.asarray(channel['hrf_mean'], dtype=np.float64), 
+                np.asarray(channel['hrf_std'], dtype=np.float64), 
                 channel['location']
             )
+            empty_hrf.__repr__()
 
             # Insert empty hrf into tree and attach pointer to channel
             self.channels[ch_name] = self.tree.insert(empty_hrf)

@@ -150,6 +150,16 @@ class Tree:
     def search_dfs(self, optode, max_distance = 0.5, depth=0, node = None, max_point = None, min_point = None):
         """
         Searches the tree to find a HRF node within the max distance
+
+        Arguments:
+            optode (list of floats) - The x, y, z coordinates of the optode
+            max_distance (float) - The maximum distance to search for a HRF node
+            depth (int) - The current depth of the search
+            node (HRF) - The current node in the search
+            max_point (list of floats) - The maximum x, y, z coordinates of the search
+            min_point (list of floats) - The minimum x, y, z coordinates of the search
+        Returns:
+            node (HRF) - The HRF node within the max distance
         """
         if node is None:
             node = self.root
@@ -187,6 +197,15 @@ class Tree:
             return self.search_dfs(optode, max_distance, depth + 1, node.right, max_point, min_point)
 
     def search_bfs(self, optode, max_distance):
+        """
+        Searches the tree to find a HRF node within the max distance using BFS
+        
+        Arguments:
+            optode (list of floats) - The x, y, z coordinates of the optode
+            max_distance (float) - The maximum distance to search for a HRF node
+        Returns:
+            node (HRF) - The HRF node within the max distance
+        """
         if self.root is None:
             return None
 
@@ -251,6 +270,12 @@ class Tree:
 
 
     def delete(self, hrf):
+        """
+        Delete a node from the 3D k-d tree based on spatial position.
+        
+        Arguments:
+            hrf (HRF) - The HRF node to delete
+        """
         self.root = self._delete_recursive(self.root, hrf, 0)
 
     def _delete_recursive(self, node, hrf, depth):
@@ -324,8 +349,8 @@ class HRF:
         self.length = int(round(self.sfreq * duration, 0))
 
         # Set the HRF mean and standard deviation of the trace
-        self.trace = trace
-        self.trace_std = trace_std
+        self.trace = np.asarray(trace, dtype=np.float64)
+        self.trace_std = np.asarray(trace_std, dtype=np.float64)
 
         if isinstance(location, list): # Grab location
             self.x = location[0]
@@ -340,13 +365,13 @@ class HRF:
         # Set HRF default context
         self.context = {
             'type': 'global',
-            'doi': 'temp',
+            'doi': doi,
             'study': None,
             'task': None,
             'conditions': None,
             'stimulus': None,
             'intensity': None,
-            'duration': 12,
+            'duration': duration,
             'protocol': None,
             'age_range': None,
             'demographics': None
@@ -363,6 +388,8 @@ class HRF:
         self.process_names = ['spline_interpolate']
         self.process_options = []
 
+    def __repr__(self):
+        print(f"HRF: {self.doi} - {self.ch_name} \nSampling frequency: {self.sfreq}\nTrace: {self.trace}\nTrace standrad deviation: {self.trace_std}")
 
     def build(self, new_sfreq, plot = False, show = False):
         # Define the processes for generating an hrf
